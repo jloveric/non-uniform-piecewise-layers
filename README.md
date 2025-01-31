@@ -66,10 +66,6 @@ The layer consists of the following learnable parameters:
 
 For each input-output pair, the layer learns a separate piecewise linear function defined by `num_points` control points. The forward pass performs efficient linear interpolation between these points.
 
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
