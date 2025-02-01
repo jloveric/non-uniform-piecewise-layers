@@ -30,6 +30,23 @@ class NonUniformPiecewiseLinear(nn.Module):
         self.num_outputs = num_outputs
         self.num_points = num_points
 
+        # Register buffer for absolute gradient accumulation
+        self.register_buffer('abs_grad_accumulation', None)
+        
+        # Register the hook for gradient accumulation
+        def accumulate_abs_grad_hook(grad):
+            if self.abs_grad_accumulation is None:
+                self.abs_grad_accumulation = torch.zeros_like(grad)
+            self.abs_grad_accumulation += torch.abs(grad)
+            return grad
+        
+        self.values.register_hook(accumulate_abs_grad_hook)
+
+    def zero_abs_grad_accumulation(self):
+        """Zero out the accumulated absolute gradients."""
+        if self.abs_grad_accumulation is not None:
+            self.abs_grad_accumulation.zero_()
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass of the layer.
@@ -128,12 +145,12 @@ class NonUniformPiecewiseLinear(nn.Module):
             This method should be called after a forward and backward pass,
             when gradients have been accumulated.
         """
-        if self.values.grad is None:
-            raise ValueError("No gradients available. Run backward() first.")
+        if self.abs_grad_accumulation is None:
+            raise ValueError("No absolute gradients accumulated. Run backward() first.")
             
         with torch.no_grad():
-            # Use absolute gradients of values as error estimate
-            abs_grads = torch.abs(self.values.grad)  # (num_inputs, num_outputs, num_points)
+            # Use accumulated absolute gradients as error estimate
+            abs_grads = self.abs_grad_accumulation  # (num_inputs, num_outputs, num_points)
             
             # Find the point with maximum gradient
             max_grad_flat = torch.argmax(abs_grads.view(-1))
@@ -166,6 +183,50 @@ class NonUniformPiecewiseLinear(nn.Module):
             new_positions[:, :, :self.num_points] = self.positions
             new_values[:, :, :self.num_points] = self.values
             
+
+            if split_strategy==2:  # split_strategy == 2
+                print(f"Strategy 2: point_idx={point_idx}, num_points={self.num_points}")
+                
+                if point_idx >= self.num_points - 1: 
+                    split_strategy=0
+                elif point_idx <= 0:
+                    split_strategy=1
+                
+                else:
+                    # Get the boundaries (points to left and right of max error point)
+                    left_boundary = old_positions[point_idx - 1]
+                    right_boundary = old_positions[point_idx + 1]
+                    interval_size = right_boundary - left_boundary
+                    
+                    print(f"Strategy 2: Boundaries: left={left_boundary}, right={right_boundary}")
+                    
+                    # Calculate positions for the two points (evenly spaced)
+                    first_third = left_boundary + interval_size / 3
+                    second_third = left_boundary + 2 * interval_size / 3
+                    
+                    print(f"Strategy 2: New positions: first={first_third}, second={second_third}")
+                    
+                    # Get the original values for interpolation
+                    left_val = old_values[point_idx - 1]
+                    right_val = old_values[point_idx + 1]
+                    
+                    # Linear interpolation for both points
+                    t1 = (first_third - left_boundary) / (right_boundary - left_boundary)
+                    t2 = (second_third - left_boundary) / (right_boundary - left_boundary)
+                    first_val = left_val + t1 * (right_val - left_val)
+                    second_val = left_val + t2 * (right_val - left_val)
+                    
+                    # Update the existing point's position and value
+                    new_positions[input_idx, output_idx, point_idx] = first_third
+                    new_values[input_idx, output_idx, point_idx] = first_val
+                    
+                    # Set up for inserting the second point
+                    new_pos = second_third
+                    new_value = second_val
+                    insert_idx = point_idx + 1
+            
+            
+            print('point_idx', point_idx,'split_strategy', split_strategy)
             # Calculate new point position based on strategy
             if split_strategy == 0 and point_idx > 0:
                 # Add point halfway to left neighbor
@@ -173,30 +234,16 @@ class NonUniformPiecewiseLinear(nn.Module):
                 curr_pos = old_positions[point_idx]
                 new_pos = (left_pos + curr_pos) / 2
                 insert_idx = point_idx
-            elif split_strategy == 1 and point_idx < self.num_points - 1:
+            elif split_strategy == 1 and point_idx < self.num_points-1:
                 # Add point halfway to right neighbor
                 curr_pos = old_positions[point_idx]
                 right_pos = old_positions[point_idx + 1]
                 new_pos = (curr_pos + right_pos) / 2
                 insert_idx = point_idx + 1
-            else:  # split_strategy == 2
-                if point_idx >= self.num_points - 1:
-                    return False
-                    
-                # Move current point left 1/3 and add new point 1/3 right
-                left_pos = old_positions[point_idx]
-                right_pos = old_positions[point_idx + 1]
-                interval_size = right_pos - left_pos
-                
-                # Update current point position (1/3 to the left)
-                new_positions[input_idx, output_idx, point_idx] = left_pos + interval_size / 3
-                
-                # New point position (1/3 to the right)
-                new_pos = right_pos - interval_size / 3
-                insert_idx = point_idx + 1
+            
             
             # Linearly interpolate to get the value at the new position
-            if insert_idx > 0:
+            if insert_idx > 0 and split_strategy != 2:  
                 left_pos = old_positions[insert_idx - 1]
                 left_val = old_values[insert_idx - 1]
                 right_pos = old_positions[insert_idx]
@@ -205,7 +252,7 @@ class NonUniformPiecewiseLinear(nn.Module):
                 # Linear interpolation
                 t = (new_pos - left_pos) / (right_pos - left_pos)
                 new_value = left_val + t * (right_val - left_val)
-            else:
+            elif insert_idx == 0 and split_strategy != 2:
                 # If inserting at the start, use the value of the first point
                 new_value = old_values[0]
             
@@ -223,4 +270,5 @@ class NonUniformPiecewiseLinear(nn.Module):
             self.values = nn.Parameter(new_values)
             self.num_points += 1
             
+            print(f"Successfully added point. New num_points: {self.num_points}")
             return True

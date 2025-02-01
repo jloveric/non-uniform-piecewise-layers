@@ -80,6 +80,7 @@ losses = []
 num_points_history = []
 for epoch in range(num_epochs):
     optimizer.zero_grad()
+    model.piecewise.zero_abs_grad_accumulation()  # Zero out absolute gradient accumulation
     output = model(x)
     loss = criterion(output, y)
     loss.backward()
@@ -87,8 +88,9 @@ for epoch in range(num_epochs):
     # Add a new point periodically if we haven't reached max_points
     if epoch > 0 and epoch % points_add_frequency == 0 and model.piecewise.num_points < max_points:
         # Try each split strategy in turn
-        strategy = (epoch // points_add_frequency) % 3
+        strategy = 2 #(epoch // points_add_frequency) % 3
         success = model.piecewise.add_point_at_max_error(split_strategy=strategy)
+        print('split_strategy', strategy)
         if success:
             print(f'Epoch {epoch}: Added point using strategy {strategy}. '
                   f'Now using {model.piecewise.num_points} points')
