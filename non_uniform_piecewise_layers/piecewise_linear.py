@@ -34,13 +34,16 @@ class NonUniformPiecewiseLinear(nn.Module):
         self.register_buffer('abs_grad_accumulation', None)
         
         # Register the hook for gradient accumulation
+        """
         def accumulate_abs_grad_hook(grad):
+            #print('grad.shape', grad.shape)
             if self.abs_grad_accumulation is None:
                 self.abs_grad_accumulation = torch.zeros_like(grad)
-            self.abs_grad_accumulation += torch.abs(grad)
+            self.abs_grad_accumulation = torch.abs(grad)
             return grad
         
         self.values.register_hook(accumulate_abs_grad_hook)
+        """
 
     def zero_abs_grad_accumulation(self):
         """Zero out the accumulated absolute gradients."""
@@ -127,7 +130,7 @@ class NonUniformPiecewiseLinear(nn.Module):
             self.positions.data = self.positions[i, j, sorted_indices]
             self.values.data = self.values[i, j, sorted_indices]
 
-    def add_point_at_max_error(self, split_strategy: int = 0):
+    def add_point_at_max_error(self, abs_grad, split_strategy: int = 0):
         """
         Add a new control point where the absolute gradient is largest, indicating
         where the error is most sensitive to changes.
@@ -145,12 +148,10 @@ class NonUniformPiecewiseLinear(nn.Module):
             This method should be called after a forward and backward pass,
             when gradients have been accumulated.
         """
-        if self.abs_grad_accumulation is None:
-            raise ValueError("No absolute gradients accumulated. Run backward() first.")
             
         with torch.no_grad():
             # Use accumulated absolute gradients as error estimate
-            abs_grads = self.abs_grad_accumulation  # (num_inputs, num_outputs, num_points)
+            abs_grads = abs_grad  # (num_inputs, num_outputs, num_points)
             
             # Find the point with maximum gradient
             max_grad_flat = torch.argmax(abs_grads.view(-1))
