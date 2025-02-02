@@ -67,7 +67,7 @@ class SineApproximator(nn.Module):
 def generate_optimizer(parameters) :
     #return torch.optim.Adam(parameters,1e-3)
     #return torch.optim.SGD(parameters, lr=1e-2)
-    return Lion(parameters, lr=1e-4)
+    return Lion(parameters, lr=1e-3)
 
 def compute_grads(x, model):
     output = model(x)
@@ -83,7 +83,9 @@ def compute_grads(x, model):
 # Training parameters
 initial_points = 3  # Number of points in piecewise function
 max_points = 50    # Maximum number of points to add
-points_add_frequency = 2000  # Add a point every N epochs
+min_epochs_between_points = 500  # Minimum epochs to wait between adding points
+plateau_window = 200  # Window size to check for loss plateau
+plateau_threshold = 0.00001  # Relative improvement threshold to detect plateau
 model = SineApproximator(initial_points)
 criterion = nn.MSELoss()
 optimizer = generate_optimizer(model.parameters())
@@ -95,40 +97,55 @@ save_progress_plot(model, x, y, 0, float('inf'), 'initial')
 # Training loop
 losses = []
 num_points_history = []
-for epoch in range(num_epochs):
-    
-    optimizer.zero_grad()
-    #model.piecewise.zero_abs_grad_accumulation()  # Zero out absolute gradient accumulation
-    output = model(x)
-    
-    #jac = jacobian(output, )
-    #print('res grad.shape', len(grads))
-    loss = criterion(output, y)
+last_point_added_epoch = -min_epochs_between_points  # Allow adding point at start if needed
+best_loss = float('inf')
 
+for epoch in range(num_epochs):
+    optimizer.zero_grad()
+    output = model(x)
+    loss = criterion(output, y)
     loss.backward()
     
-    # Add a new point periodically if we haven't reached max_points
-    if epoch > 0 and epoch % points_add_frequency == 0 and model.piecewise.num_points < max_points:
-        # Try each split strategy in turn
-        abs_grad = compute_grads(x, model)
-        #print('abs_grad', abs_grad)
-        strategy = 2 #(epoch // points_add_frequency) % 3
-        success = model.piecewise.add_point_at_max_error(abs_grad=abs_grad,split_strategy=strategy)
-        #print('split_strategy', strategy)
-        if success:
-            print(f'Epoch {epoch}: Added point using strategy {strategy}. '
-                  f'Now using {model.piecewise.num_points} points')
-            # Create new optimizer since parameters have changed
-            optimizer = generate_optimizer(model.parameters())
-            # Save plot after adding new point
-            save_progress_plot(model, x, y, epoch, loss.item(), strategy)
+    # Store the loss
+    current_loss = loss.item()
+    losses.append(current_loss)
+    best_loss = min(best_loss, current_loss)
+    
+    # Check if we should add a new point
+    if (epoch > plateau_window and  # Need enough history
+        epoch - last_point_added_epoch >= min_epochs_between_points and  # Minimum waiting period
+        model.piecewise.num_points < max_points):  # Haven't reached max points
+        
+        # Check if loss has plateaued by comparing current loss with loss from plateau_window epochs ago
+        window_start_loss = losses[epoch - plateau_window]
+        relative_improvement = (window_start_loss - current_loss) / window_start_loss
+        
+        # Only add point if we're at the best loss we've seen and improvement is minimal
+        if relative_improvement < plateau_threshold and current_loss <= best_loss:
+            # Loss has plateaued at best value, try to add a point
+            abs_grad = compute_grads(x, model)
+            strategy = 2
+            success = model.piecewise.add_point_at_max_error(abs_grad=abs_grad, split_strategy=strategy)
+            
+            if success:
+                last_point_added_epoch = epoch
+                print(f'Epoch {epoch}: Added point using strategy {strategy}. '
+                      f'Now using {model.piecewise.num_points} points. '
+                      f'Current loss: {current_loss:.6f} (best loss)')
+                # Create new optimizer since parameters have changed
+                optimizer = generate_optimizer(model.parameters())
+                # Save plot after adding new point
+                save_progress_plot(model, x, y, epoch, loss.item(), strategy)
     
     optimizer.step()
     
     # Enforce monotonicity of the positions
     model.piecewise.enforce_monotonic()
     
-    losses.append(loss.item())
+    # Clamp positions to allowed range after optimizer step
+    with torch.no_grad():
+        model.piecewise.positions.data.clamp_(model.piecewise.position_min, model.piecewise.position_max)
+    
     num_points_history.append(model.piecewise.num_points)
     
     if (epoch + 1) % 100 == 0:

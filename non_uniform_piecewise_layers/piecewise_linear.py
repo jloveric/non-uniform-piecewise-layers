@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 class NonUniformPiecewiseLinear(nn.Module):
-    def __init__(self, num_inputs: int, num_outputs: int, num_points: int):
+    def __init__(self, num_inputs: int, num_outputs: int, num_points: int, position_range=(-1, 1)):
         """
         Initialize a non-uniform piecewise linear layer.
         
@@ -10,12 +10,15 @@ class NonUniformPiecewiseLinear(nn.Module):
             num_inputs (int): Number of input features
             num_outputs (int): Number of output features
             num_points (int): Number of points per piecewise function
+            position_range (tuple): Tuple of (min, max) for allowed position range. Default is (-1, 1)
         """
         super().__init__()
         
+        self.position_min, self.position_max = position_range
+        
         # Initialize the x positions (must be monotonically increasing)
         self.positions = nn.Parameter(
-            torch.linspace(-1, 1, num_points).repeat(num_inputs, num_outputs, 1)
+            torch.linspace(self.position_min, self.position_max, num_points).repeat(num_inputs, num_outputs, 1)
         )
         
         # Initialize the y values
@@ -129,6 +132,9 @@ class NonUniformPiecewiseLinear(nn.Module):
             # Sort positions and values using the same indices
             self.positions.data = self.positions[i, j, sorted_indices]
             self.values.data = self.values[i, j, sorted_indices]
+            
+            # Clamp positions to allowed range
+            self.positions.data.clamp_(self.position_min, self.position_max)
 
     def add_point_at_max_error(self, abs_grad, split_strategy: int = 0):
         """
@@ -183,7 +189,6 @@ class NonUniformPiecewiseLinear(nn.Module):
             # Copy existing points
             new_positions[:, :, :self.num_points] = self.positions
             new_values[:, :, :self.num_points] = self.values
-            
 
             if split_strategy==2:  # split_strategy == 2
                 print(f"Strategy 2: point_idx={point_idx}, num_points={self.num_points}")
@@ -204,6 +209,10 @@ class NonUniformPiecewiseLinear(nn.Module):
                     # Calculate positions for the two points (evenly spaced)
                     first_third = left_boundary + interval_size / 3
                     second_third = left_boundary + 2 * interval_size / 3
+                    
+                    # Clamp the new positions to allowed range
+                    first_third = torch.clamp(first_third, self.position_min, self.position_max)
+                    second_third = torch.clamp(second_third, self.position_min, self.position_max)
                     
                     print(f"Strategy 2: New positions: first={first_third}, second={second_third}")
                     
@@ -234,12 +243,14 @@ class NonUniformPiecewiseLinear(nn.Module):
                 left_pos = old_positions[point_idx - 1]
                 curr_pos = old_positions[point_idx]
                 new_pos = (left_pos + curr_pos) / 2
+                new_pos = torch.clamp(new_pos, self.position_min, self.position_max)
                 insert_idx = point_idx
             elif split_strategy == 1 and point_idx < self.num_points-1:
                 # Add point halfway to right neighbor
                 curr_pos = old_positions[point_idx]
                 right_pos = old_positions[point_idx + 1]
                 new_pos = (curr_pos + right_pos) / 2
+                new_pos = torch.clamp(new_pos, self.position_min, self.position_max)
                 insert_idx = point_idx + 1
             
             
