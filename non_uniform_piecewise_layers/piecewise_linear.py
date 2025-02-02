@@ -31,7 +31,7 @@ class NonUniformPiecewiseLinear(nn.Module):
         self.num_points = num_points
 
         # Register buffer for absolute gradient accumulation
-        self.register_buffer('abs_grad_accumulation', None)
+        #self.register_buffer('abs_grad_accumulation', None)
         
         # Register the hook for gradient accumulation
         """

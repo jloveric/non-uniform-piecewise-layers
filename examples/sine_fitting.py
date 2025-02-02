@@ -67,7 +67,7 @@ class SineApproximator(nn.Module):
 def generate_optimizer(parameters) :
     #return torch.optim.Adam(parameters,1e-3)
     #return torch.optim.SGD(parameters, lr=1e-2)
-    return Lion(parameters, lr=1e-3)
+    return Lion(parameters, lr=1e-4)
 
 def compute_grads(x, model):
     output = model(x)
@@ -81,13 +81,13 @@ def compute_grads(x, model):
     
 
 # Training parameters
-initial_points = 2  # Number of points in piecewise function
+initial_points = 3  # Number of points in piecewise function
 max_points = 50    # Maximum number of points to add
-points_add_frequency = 1000  # Add a point every N epochs
+points_add_frequency = 2000  # Add a point every N epochs
 model = SineApproximator(initial_points)
 criterion = nn.MSELoss()
 optimizer = generate_optimizer(model.parameters())
-num_epochs = 10000
+num_epochs = 100000
 
 # Save initial state
 save_progress_plot(model, x, y, 0, float('inf'), 'initial')
@@ -111,11 +111,11 @@ for epoch in range(num_epochs):
     if epoch > 0 and epoch % points_add_frequency == 0 and model.piecewise.num_points < max_points:
         # Try each split strategy in turn
         abs_grad = compute_grads(x, model)
-        print('abs_grad', abs_grad)
+        #print('abs_grad', abs_grad)
         strategy = 2 #(epoch // points_add_frequency) % 3
         success = model.piecewise.add_point_at_max_error(abs_grad=abs_grad,split_strategy=strategy)
         #print('split_strategy', strategy)
-        if False:#success:
+        if success:
             print(f'Epoch {epoch}: Added point using strategy {strategy}. '
                   f'Now using {model.piecewise.num_points} points')
             # Create new optimizer since parameters have changed
