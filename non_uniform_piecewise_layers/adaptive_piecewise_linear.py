@@ -139,7 +139,7 @@ class AdaptivePiecewiseLinear(nn.Module):
         abs_grad = torch.stack(abs_grad).sum(dim=0)
         return abs_grad
 
-    def add_point_at_max_error(self, abs_grad, split_strategy: int = 0):
+    def add_point_at_max_error_old(self, abs_grad, split_strategy: int = 0):
         """
         Add a new control point where the absolute gradient is largest, indicating
         where the error is most sensitive to changes.
@@ -279,6 +279,101 @@ class AdaptivePiecewiseLinear(nn.Module):
             # Insert the new point
             new_positions[input_idx, output_idx, insert_idx] = new_pos
             new_values[input_idx, output_idx, insert_idx] = new_value
+            
+            # Update the layer's parameters
+            self.positions = new_positions
+            self.values = nn.Parameter(new_values)
+            self.num_points += 1
+            
+            return True
+
+    def add_point_at_max_error(self, abs_grad, split_strategy=0):
+        """
+        Add a new control point between the point with maximum error and its neighbor
+        with the larger error (left or right). If there are only 2 points, it adds
+        a point in the center.
+        
+        Args:
+            abs_grad: Absolute gradients tensor from compute_abs_grads
+            split_strategy: Ignored, kept for backward compatibility
+        
+        Returns:
+            bool: True if point was successfully added, False otherwise
+        
+        Note:
+            This method should be called after a forward and backward pass,
+            when gradients have been accumulated.
+        """
+            
+        with torch.no_grad():
+            # Use accumulated absolute gradients as error estimate
+            abs_grads = abs_grad  # (num_points)
+            
+            # Find the point with maximum gradient
+            point_idx = torch.argmax(abs_grads)
+            
+            # Get current positions and values for the relevant input/output pair
+            old_positions = self.positions[0, 0]  # Since we're using 1 input, 1 output
+            old_values = self.values[0, 0]
+            
+            # Create new tensors with space for one more point
+            new_positions = torch.zeros(self.num_inputs, self.num_outputs, self.num_points + 1,
+                                     device=self.positions.device)
+            new_values = torch.zeros(self.num_inputs, self.num_outputs, self.num_points + 1,
+                                   device=self.values.device)
+            
+            # Copy existing points
+            new_positions[:, :, :self.num_points] = self.positions
+            new_values[:, :, :self.num_points] = self.values
+
+            # Special case: if only 2 points, add point in center
+            if self.num_points == 2:
+                left_pos = old_positions[0]
+                right_pos = old_positions[1]
+                new_pos = (left_pos + right_pos) / 2
+                new_pos = torch.clamp(new_pos, self.position_min, self.position_max)
+                insert_idx = 1
+
+                # Linear interpolation for the new value
+                left_val = old_values[0]
+                right_val = old_values[1]
+                t = 0.5  # Since we're inserting at midpoint
+                new_value = left_val + t * (right_val - left_val)
+            else:
+                # Get errors of left and right neighbors
+                left_error = abs_grads[point_idx - 1] if point_idx > 0 else torch.tensor(-float('inf'))
+                right_error = abs_grads[point_idx + 1] if point_idx < self.num_points - 1 else torch.tensor(-float('inf'))
+                
+                # Choose neighbor with larger error
+                if left_error > right_error:
+                    # Insert between max error point and left neighbor
+                    left_pos = old_positions[point_idx - 1]
+                    right_pos = old_positions[point_idx]
+                    insert_idx = point_idx
+                else:
+                    # Insert between max error point and right neighbor
+                    left_pos = old_positions[point_idx]
+                    right_pos = old_positions[point_idx + 1]
+                    insert_idx = point_idx + 1
+                
+                # Calculate new position halfway between points
+                new_pos = (left_pos + right_pos) / 2
+                new_pos = torch.clamp(new_pos, self.position_min, self.position_max)
+                
+                # Linear interpolation for the new value
+                left_val = old_values[insert_idx - 1]
+                right_val = old_values[insert_idx]
+                t = (new_pos - left_pos) / (right_pos - left_pos)
+                new_value = left_val + t * (right_val - left_val)
+            
+            # Move all points after insert_idx one position to the right
+            if insert_idx < self.num_points:
+                new_positions[:, :, insert_idx+1:] = self.positions[:, :, insert_idx:]
+                new_values[:, :, insert_idx+1:] = self.values[:, :, insert_idx:]
+            
+            # Insert the new point
+            new_positions[:, :, insert_idx] = new_pos
+            new_values[:, :, insert_idx] = new_value
             
             # Update the layer's parameters
             self.positions = new_positions
