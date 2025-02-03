@@ -64,20 +64,13 @@ class SineApproximator(nn.Module):
     def forward(self, x):
         return self.piecewise(x)
 
+    def compute_abs_grads(self, x):
+        return self.piecewise.compute_abs_grads(x)
+
 def generate_optimizer(parameters) :
     #return torch.optim.Adam(parameters,1e-3)
     #return torch.optim.SGD(parameters, lr=1e-2)
     return Lion(parameters, lr=1e-3)
-
-def compute_grads(x, model):
-    output = model(x)
-    #print('output.shape', output.shape,output.shape[0])
-    grads = [torch.autograd.grad(output[element],model.parameters(), retain_graph=True) for element in range(output.shape[0])]
-    #print('grads[0]',grads[0])
-    abs_grad=[torch.flatten(torch.abs(torch.cat(grad)),start_dim=1).sum(dim=0) for grad in grads]
-    #print('abs_grad.shape', abs_grad[0].shape)
-    abs_grad = torch.stack(abs_grad).sum(dim=0)
-    return abs_grad
     
 
 # Training parameters
@@ -85,7 +78,7 @@ initial_points = 3  # Number of points in piecewise function
 max_points = 50    # Maximum number of points to add
 min_epochs_between_points = 500  # Minimum epochs to wait between adding points
 plateau_window = 200  # Window size to check for loss plateau
-plateau_threshold = 0.00001  # Relative improvement threshold to detect plateau
+plateau_threshold = 0.001  # Relative improvement threshold to detect plateau
 model = SineApproximator(initial_points)
 criterion = nn.MSELoss()
 optimizer = generate_optimizer(model.parameters())
@@ -123,7 +116,7 @@ for epoch in range(num_epochs):
         # Only add point if we're at the best loss we've seen and improvement is minimal
         if relative_improvement < plateau_threshold and current_loss <= best_loss:
             # Loss has plateaued at best value, try to add a point
-            abs_grad = compute_grads(x, model)
+            abs_grad = model.compute_abs_grads(x)
             strategy = 2
             success = model.piecewise.add_point_at_max_error(abs_grad=abs_grad, split_strategy=strategy)
             

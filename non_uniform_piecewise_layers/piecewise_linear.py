@@ -136,6 +136,19 @@ class NonUniformPiecewiseLinear(nn.Module):
             # Clamp positions to allowed range
             self.positions.data.clamp_(self.position_min, self.position_max)
 
+    def compute_abs_grads(self, x):
+        """
+        Super slow computation so you only want to compute this periodically
+        """
+        output = self(x)
+        #print('output.shape', output.shape,output.shape[0])
+        grads = [torch.autograd.grad(output[element],self.parameters(), retain_graph=True) for element in range(output.shape[0])]
+        #print('grads[0]',grads[0])
+        abs_grad=[torch.flatten(torch.abs(torch.cat(grad)),start_dim=1).sum(dim=0) for grad in grads]
+        #print('abs_grad.shape', abs_grad[0].shape)
+        abs_grad = torch.stack(abs_grad).sum(dim=0)
+        return abs_grad
+
     def add_point_at_max_error(self, abs_grad, split_strategy: int = 0):
         """
         Add a new control point where the absolute gradient is largest, indicating
