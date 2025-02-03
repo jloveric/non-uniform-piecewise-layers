@@ -1,5 +1,7 @@
 # Non-Uniform Piecewise Linear Layers
 
+![Example of function approximation](examples/final_approximation.png)
+
 A PyTorch implementation of non-uniform piecewise linear layers. These layers can learn arbitrary continuous piecewise linear functions, where both the positions (x-coordinates) and values (y-coordinates) of the control points are learned parameters.
 
 ## Features

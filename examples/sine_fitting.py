@@ -50,7 +50,7 @@ def save_progress_plot(model, x, y, epoch, loss, strategy):
 
 # Create synthetic sine wave data
 x = torch.linspace(-1, 1, 1000).reshape(-1, 1)
-y = torch.cos(1/(torch.abs(x)+0.01))
+y = torch.cos(1/(torch.abs(x)+0.05))
 
 # Create a simple model with our non-uniform piecewise linear layer
 class SineApproximator(nn.Module):
