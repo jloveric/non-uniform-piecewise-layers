@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 from non_uniform_piecewise_layers import NonUniformPiecewiseLinear
+from non_uniform_piecewise_layers import AdaptivePiecewiseLinear
 from lion_pytorch import Lion
 from torch.autograd.functional import jacobian
 
@@ -55,7 +56,14 @@ y = torch.cos(1/torch.abs(x)+0.25)
 class SineApproximator(nn.Module):
     def __init__(self, num_points):
         super().__init__()
-        self.piecewise = NonUniformPiecewiseLinear(
+
+
+        #self.piecewise = NonUniformPiecewiseLinear(
+        #    num_inputs=1,
+        #    num_outputs=1,
+        #    num_points=num_points
+        #)
+        self.piecewise = AdaptivePiecewiseLinear(
             num_inputs=1,
             num_outputs=1,
             num_points=num_points
@@ -133,7 +141,8 @@ for epoch in range(num_epochs):
     optimizer.step()
     
     # Enforce monotonicity of the positions
-    model.piecewise.enforce_monotonic()
+    if isinstance(model, NonUniformPiecewiseLinear) :
+        model.piecewise.enforce_monotonic()
     
     # Clamp positions to allowed range after optimizer step
     with torch.no_grad():
