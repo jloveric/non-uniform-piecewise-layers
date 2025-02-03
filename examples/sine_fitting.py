@@ -85,6 +85,7 @@ def generate_optimizer(parameters) :
 initial_points = 3  # Number of points in piecewise function
 max_points = 50    # Maximum number of points to add
 min_epochs_between_points = 500  # Minimum epochs to wait between adding points
+max_epochs_between_points = 10000
 plateau_window = 200  # Window size to check for loss plateau
 plateau_threshold = 0.001  # Relative improvement threshold to detect plateau
 model = SineApproximator(initial_points)
@@ -115,14 +116,14 @@ for epoch in range(num_epochs):
     # Check if we should add a new point
     if (epoch > plateau_window and  # Need enough history
         epoch - last_point_added_epoch >= min_epochs_between_points and  # Minimum waiting period
-        model.piecewise.num_points < max_points):  # Haven't reached max points
+        model.piecewise.num_points < max_points) :  # Haven't reached max points
         
         # Check if loss has plateaued by comparing current loss with loss from plateau_window epochs ago
         window_start_loss = losses[epoch - plateau_window]
         relative_improvement = (window_start_loss - current_loss) / window_start_loss
         
         # Only add point if we're at the best loss we've seen and improvement is minimal
-        if relative_improvement < plateau_threshold and current_loss <= best_loss:
+        if relative_improvement < plateau_threshold and current_loss <= best_loss or (epoch-last_point_added_epoch>=max_epochs_between_points):
             # Loss has plateaued at best value, try to add a point
             abs_grad = model.compute_abs_grads(x)
             strategy = 2
