@@ -79,6 +79,115 @@ class AdaptivePiecewiseLinear(nn.Module):
                 self.values = nn.Parameter(new_vals)
                 self.num_points = len(combined)
 
+    def insert_points(self, points: torch.Tensor):
+        """
+        Insert specified points into the model, interpolating values between the two nearest neighbors
+        for each point. Points are assumed to be within [-1, 1].
+
+        If the user has values that repeat in one dimension but not another this will
+        fail.
+        
+        Args:
+            points (torch.Tensor): Points to insert with shape (batch_size, num_inputs) or (num_inputs,)
+            
+        Returns:
+            bool: True if points were inserted, False if points were too close to existing ones
+        """
+        with torch.no_grad():
+            # Ensure points has correct shape (num_inputs,)
+            if points is None:
+                return False
+                
+            if points.dim() == 2:
+                # If we get a batch of points, just take the first one
+                points = points[0]
+            
+            if points.size(0) != self.num_inputs:
+                raise ValueError(f"Points must have {self.num_inputs} dimensions, got {points.size(0)}")
+
+            # Check if any point is too close to existing points
+            min_distance = 1e-6
+            for i in range(self.num_inputs):
+                positions = self.positions[i, 0]  # Use first output dimension as reference
+                distances = torch.abs(positions - points[i])
+                if torch.any(distances < min_distance):
+                    return False
+
+            # Combine current and new positions
+            current_positions = self.positions  # (num_inputs, num_outputs, num_points)
+            current_values = self.values       # (num_inputs, num_outputs, num_points)
+            
+            # For each new point, we'll interpolate between its two nearest neighbors
+            new_pos = []
+            new_vals = []
+            
+            for i in range(self.num_inputs):
+                for j in range(self.num_outputs):
+                    pos = current_positions[i, j]  # Current positions for this i,j
+                    vals = current_values[i, j]    # Current values for this i,j
+                    
+                    # Add the new point for this input dimension
+                    all_points = torch.cat([pos, points[i].unsqueeze(0)])
+                    sorted_indices = torch.argsort(all_points)
+                    sorted_points = all_points[sorted_indices]
+                    
+                    # Remove duplicates while preserving order
+                    unique_points, unique_indices = torch.unique_consecutive(sorted_points, return_inverse=True)
+                    
+                    # Initialize values for all points
+                    all_values = torch.zeros_like(unique_points)
+                    
+                    # Copy existing values
+                    existing_mask = unique_points.unsqueeze(1) == pos.unsqueeze(0)
+                    existing_indices = torch.where(existing_mask.any(dim=1))[0]
+                    all_values[existing_indices] = vals[existing_mask.any(dim=0)]
+                    
+                    # Find indices of new points (those not in existing_indices)
+                    new_indices = torch.ones_like(unique_points, dtype=torch.bool)
+                    new_indices[existing_indices] = False
+                    new_point_indices = torch.where(new_indices)[0]
+                    
+                    # For each new point, interpolate between nearest neighbors
+                    for idx in new_point_indices:
+                        point = unique_points[idx]
+                        
+                        # Find nearest existing points
+                        left_mask = pos <= point
+                        right_mask = pos > point
+                        
+                        if not left_mask.any() or not right_mask.any():
+                            # If point is outside range, use nearest value
+                            nearest_idx = torch.argmin(torch.abs(pos - point))
+                            all_values[idx] = vals[nearest_idx]
+                        else:
+                            # Get nearest left and right points
+                            left_idx = torch.where(left_mask)[0][-1]
+                            right_idx = torch.where(right_mask)[0][0]
+                            
+                            # Linear interpolation between nearest points
+                            left_pos = pos[left_idx]
+                            right_pos = pos[right_idx]
+                            left_val = vals[left_idx]
+                            right_val = vals[right_idx]
+                            
+                            # Compute interpolated value
+                            t = (point - left_pos) / (right_pos - left_pos)
+                            all_values[idx] = left_val + t * (right_val - left_val)
+                    
+                    new_pos.append(unique_points)
+                    new_vals.append(all_values)
+            
+            # Stack all the new positions and values
+            new_pos = torch.stack([p for p in new_pos]).reshape(self.num_inputs, self.num_outputs, -1)
+            new_vals = torch.stack([v for v in new_vals]).reshape(self.num_inputs, self.num_outputs, -1)
+            
+            # Update the buffers and parameters
+            self.positions = new_pos
+            self.values = nn.Parameter(new_vals)
+            self.num_points = new_pos.size(-1)
+            
+            return True
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass of the layer.
@@ -381,3 +490,45 @@ class AdaptivePiecewiseLinear(nn.Module):
             self.num_points += 1
             
             return True
+
+    def largest_error(self, error: torch.Tensor, x: torch.Tensor, min_distance: float = 1e-6) -> torch.Tensor:
+        """
+        Find the x value that corresponds to the largest error in the batch.
+        Excludes points that are too close to existing points.
+        
+        Args:
+            error (torch.Tensor): Error tensor of shape (batch_size, error)
+            x (torch.Tensor): Input tensor of shape (batch_size, num_inputs)
+            min_distance (float): Minimum distance required from existing points
+            
+        Returns:
+            torch.Tensor: x value that had the largest error, or None if no valid point found
+        """
+        with torch.no_grad():
+            # Sort errors in descending order
+            sorted_errors, indices = torch.sort(error.abs().view(-1), descending=True)
+            
+            # Convert to batch indices
+            batch_indices = indices // error.size(1)
+            
+            # Get corresponding x values
+            candidate_x = x[batch_indices]
+            
+            # Check each candidate until we find one that's far enough from existing points
+            for i in range(len(candidate_x)):
+                x_val = candidate_x[i:i+1]  # Keep batch dimension
+                
+                # Check distance to all existing points
+                too_close = False
+                for j in range(self.num_inputs):
+                    positions = self.positions[j, 0]  # Use first output dimension as reference
+                    distances = torch.abs(positions - x_val[0, j])
+                    if torch.any(distances < min_distance):
+                        too_close = True
+                        break
+                
+                if not too_close:
+                    return x_val
+            
+            # If we get here, no valid point was found
+            return None

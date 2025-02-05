@@ -75,6 +75,12 @@ class SineApproximator(nn.Module):
     def compute_abs_grads(self, x):
         return self.piecewise.compute_abs_grads(x)
 
+    def largest_error(self, error, x) :
+        return self.piecewise.largest_error(error,x)
+
+    def insert_points(self, x):
+        return self.piecewise.insert_points(x)
+
 def generate_optimizer(parameters) :
     #return torch.optim.Adam(parameters,1e-3)
     #return torch.optim.SGD(parameters, lr=1e-2)
@@ -85,9 +91,9 @@ def generate_optimizer(parameters) :
 initial_points = 3  # Number of points in piecewise function
 max_points = 50    # Maximum number of points to add
 min_epochs_between_points = 500  # Minimum epochs to wait between adding points
-max_epochs_between_points = 10000
+max_epochs_between_points = 100000
 plateau_window = 200  # Window size to check for loss plateau
-plateau_threshold = 0.001  # Relative improvement threshold to detect plateau
+plateau_threshold = 0.00001  # Relative improvement threshold to detect plateau
 model = SineApproximator(initial_points)
 criterion = nn.MSELoss()
 optimizer = generate_optimizer(model.parameters())
@@ -125,15 +131,21 @@ for epoch in range(num_epochs):
         # Only add point if we're at the best loss we've seen and improvement is minimal
         if relative_improvement < plateau_threshold and current_loss <= best_loss or (epoch-last_point_added_epoch>=max_epochs_between_points):
             # Loss has plateaued at best value, try to add a point
-            abs_grad = model.compute_abs_grads(x)
-            strategy = 2
-            success = model.piecewise.add_point_at_max_error(abs_grad=abs_grad, split_strategy=strategy)
+            
+            error = torch.abs(output-y)
+            new_value = model.largest_error(error, x)
+            print('new value', new_value)
+            
+            success = False
+            if new_value is not None:
+                success = model.insert_points(new_value)
             
             if success:
+                strategy = 0
                 last_point_added_epoch = epoch
                 print(f'Epoch {epoch}: Added point using strategy {strategy}. '
                       f'Now using {model.piecewise.num_points} points. '
-                      f'Current loss: {current_loss:.6f} (best loss)')
+                      f'Loss: {current_loss:.6f}')
                 # Create new optimizer since parameters have changed
                 optimizer = generate_optimizer(model.parameters())
                 # Save plot after adding new point
