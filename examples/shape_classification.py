@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 from non_uniform_piecewise_layers import AdaptivePiecewiseMLP
+from lion_pytorch import Lion
 
 # Set random seeds for reproducibility
 torch.manual_seed(42)
@@ -136,6 +137,11 @@ def save_progress_plot(model, shape, epoch, loss, num_points=100):
                 dpi=300, bbox_inches='tight')
     plt.close()
 
+def generate_optimizer(parameters) :
+    #return torch.optim.Adam(parameters,1e-3)
+    #return torch.optim.SGD(parameters, lr=1e-2)
+    return Lion(parameters, lr=1e-2)
+
 def train_shape_classifier(shape, max_epochs=100, hidden_width=8):
     """Train a model to classify points as inside/outside a shape"""
     # Create model
@@ -148,8 +154,8 @@ def train_shape_classifier(shape, max_epochs=100, hidden_width=8):
     x_train, y_train = generate_training_data(shape, num_points=1000)
     
     # Create optimizer and loss function
-    optimizer = optim.Adam(model.parameters())
-    criterion = nn.BCEWithLogitsLoss()  # Binary cross entropy with logits
+    optimizer = generate_optimizer(model.parameters())
+    criterion = nn.MSELoss()  # Binary cross entropy with logits
     
     # Training loop
     for epoch in range(max_epochs):
@@ -166,11 +172,12 @@ def train_shape_classifier(shape, max_epochs=100, hidden_width=8):
         if epoch % 10 == 0:
             # Find points with largest error
             with torch.no_grad():
-                error = torch.abs(torch.sigmoid(y_pred) - y_train)
+                error = torch.abs(y_pred - y_train)
             x_error = model.largest_error(error, x_train)
             if x_error is not None:
-                model.insert_points(x_error)
                 model.insert_nearby_point(x_error)
+                optimizer = generate_optimizer(model.parameters())
+
         
         # Save progress plot every 10 epochs
         if epoch % 10 == 0:
