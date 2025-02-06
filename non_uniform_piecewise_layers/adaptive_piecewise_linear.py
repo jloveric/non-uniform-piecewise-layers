@@ -188,6 +188,64 @@ class AdaptivePiecewiseLinear(nn.Module):
             
             return True
 
+    def insert_nearby_point(self, point: torch.Tensor) -> bool:
+        """
+        Find the nearest points to the left and right of the given point and insert
+        a new point halfway between them. The point is used only to locate the insertion
+        position, not as the actual value to insert.
+
+        Args:
+            point (torch.Tensor): Reference point with shape (num_inputs,) or (batch_size, num_inputs)
+
+        Returns:
+            bool: True if a point was inserted, False otherwise
+        """
+        with torch.no_grad():
+            # Ensure point has correct shape (num_inputs,)
+            if point is None:
+                return False
+                
+            if point.dim() == 2:
+                # If we get a batch, just take the first one
+                point = point[0]
+            
+            if point.size(0) != self.num_inputs:
+                raise ValueError(f"Point must have {self.num_inputs} dimensions, got {point.size(0)}")
+
+            # For each input dimension, find the nearest left and right points
+            midpoints = []
+            for i in range(self.num_inputs):
+                positions = self.positions[i, 0]  # Use first output dimension as reference
+                
+                # Find points to the left and right of the target point
+                left_mask = positions <= point[i]
+                right_mask = positions > point[i]
+                
+                if not left_mask.any() or not right_mask.any():
+                    # If point is outside range, we can't insert a midpoint
+                    return False
+                
+                # Get nearest left and right points
+                left_idx = torch.where(left_mask)[0][-1]
+                right_idx = torch.where(right_mask)[0][0]
+                
+                # Calculate midpoint
+                left_pos = positions[left_idx]
+                right_pos = positions[right_idx]
+                midpoint = (left_pos + right_pos) / 2
+                
+                # Check if midpoint is too close to existing points
+                min_distance = 1e-6
+                distances = torch.abs(positions - midpoint)
+                if torch.any(distances < min_distance):
+                    return False
+                    
+                midpoints.append(midpoint)
+            
+            # Create tensor of midpoints and insert them
+            midpoints = torch.tensor(midpoints, device=point.device)
+            return self.insert_points(midpoints)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass of the layer.

@@ -17,8 +17,8 @@ np.random.seed(42)
 os.makedirs('examples/progress_plots', exist_ok=True)
 
 def save_progress_plot(model, x, y, epoch, loss, strategy):
-    """Save a plot showing the current state of the approximation."""
-    plt.figure(figsize=(12, 8))
+    """Save a plot showing the current state of the approximation and absolute error."""
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 12), height_ratios=[2, 1])
     
     # Plot the results
     with torch.no_grad():
@@ -28,21 +28,36 @@ def save_progress_plot(model, x, y, epoch, loss, strategy):
     x_np = x.numpy()
     y_np = y.numpy()
     y_pred_np = y_pred.numpy()
-
-    plt.plot(x_np, y_np, 'b-', label='True Function', alpha=0.5)
-    plt.plot(x_np, y_pred_np, 'r--', label='Piecewise Linear Approximation')
+    
+    # Top subplot: Function approximation
+    ax1.plot(x_np, y_np, 'b-', label='True Function', alpha=0.5)
+    ax1.plot(x_np, y_pred_np, 'r--', label='Piecewise Linear Approximation')
 
     # Plot the control points
     positions = model.piecewise.positions.data[0, 0].numpy()
     values = model.piecewise.values.data[0, 0].numpy()
-    plt.scatter(positions, values, c='g', s=100, label='Control Points')
+    ax1.scatter(positions, values, c='g', s=100, label='Control Points')
 
-    plt.title(f'Function Approximation - Epoch {epoch}\n'
-             f'Points: {len(positions)}, Loss: {loss:.4f}, Strategy: {strategy}')
-    plt.xlabel('x')
-    plt.ylabel('y')
-    plt.legend()
-    plt.grid(True)
+    ax1.set_title(f'Function Approximation - Epoch {epoch}\n'
+                f'Points: {len(positions)}, Loss: {loss:.4f}, Strategy: {strategy}')
+    ax1.set_xlabel('x')
+    ax1.set_ylabel('y')
+    ax1.legend()
+    ax1.grid(True)
+    
+    # Bottom subplot: Absolute error
+    abs_error = np.abs(y_np - y_pred_np)
+    ax2.plot(x_np, abs_error, 'k-', label='Absolute Error')
+    ax2.scatter(positions, np.zeros_like(positions), c='g', s=100, 
+               label='Control Points', zorder=3)  # zorder to ensure points are on top
+    ax2.set_title('Absolute Error')
+    ax2.set_xlabel('x')
+    ax2.set_ylabel('|Error|')
+    ax2.legend()
+    ax2.grid(True)
+    
+    # Adjust layout to prevent overlapping
+    plt.tight_layout()
 
     plt.savefig(f'examples/progress_plots/approximation_epoch_{epoch:04d}.png', 
                 dpi=300, bbox_inches='tight')
@@ -50,7 +65,7 @@ def save_progress_plot(model, x, y, epoch, loss, strategy):
 
 # Create synthetic sine wave data
 x = torch.linspace(-1, 1, 1000).reshape(-1, 1)
-y = torch.cos(1/(torch.abs(x)+0.05))
+y = torch.cos(1/(torch.abs(x)+0.1))
 
 # Create a simple model with our non-uniform piecewise linear layer
 class SineApproximator(nn.Module):
@@ -80,17 +95,20 @@ class SineApproximator(nn.Module):
 
     def insert_points(self, x):
         return self.piecewise.insert_points(x)
+    
+    def insert_nearby_point(self,x):
+        return self.piecewise.insert_nearby_point(x)
 
 def generate_optimizer(parameters) :
     #return torch.optim.Adam(parameters,1e-3)
     #return torch.optim.SGD(parameters, lr=1e-2)
-    return Lion(parameters, lr=1e-3)
+    return torch.optim.Adam(parameters, lr=1e-2)
     
 
 # Training parameters
-initial_points = 3  # Number of points in piecewise function
+initial_points = 2  # Number of points in piecewise function
 max_points = 50    # Maximum number of points to add
-min_epochs_between_points = 500  # Minimum epochs to wait between adding points
+min_epochs_between_points = 2000  # Minimum epochs to wait between adding points
 max_epochs_between_points = 100000
 plateau_window = 200  # Window size to check for loss plateau
 plateau_threshold = 0.00001  # Relative improvement threshold to detect plateau
@@ -132,13 +150,14 @@ for epoch in range(num_epochs):
         if relative_improvement < plateau_threshold and current_loss <= best_loss or (epoch-last_point_added_epoch>=max_epochs_between_points):
             # Loss has plateaued at best value, try to add a point
             
-            error = torch.abs(output-y)
+            error = torch.pow(torch.abs(output-y),0.1)
             new_value = model.largest_error(error, x)
             print('new value', new_value)
             
             success = False
             if new_value is not None:
-                success = model.insert_points(new_value)
+                #success = model.insert_points(new_value)
+                success = model.insert_nearby_point(new_value)
             
             if success:
                 strategy = 0
