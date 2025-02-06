@@ -115,17 +115,6 @@ def save_progress_plot(model, shape, epoch, loss, num_points=100):
     # Add colorbar
     plt.colorbar(cf, label='Inside Probability')
     
-    # Plot layer points
-    colors = ['g', 'b', 'c']  # Different color for each layer
-    for i, layer in enumerate(model.layers):
-        positions = layer.positions.data
-        # For 2D input, we need both x and y positions
-        x_points = positions[0, 0].numpy()  # x positions for first output
-        y_points = positions[1, 0].numpy()  # y positions for first output
-        ax.scatter(x_points, y_points, 
-                  c=colors[i], s=50, alpha=0.5,
-                  label=f'Layer {i+1} Points')
-    
     ax.set_title(f'Shape Classification - Epoch {epoch}\nLoss: {loss:.4f}')
     ax.set_xlabel('x')
     ax.set_ylabel('y')
@@ -134,6 +123,65 @@ def save_progress_plot(model, shape, epoch, loss, num_points=100):
     ax.set_aspect('equal')
     
     plt.savefig(f'examples/shape_plots/{shape.get_name()}_epoch_{epoch:04d}.png',
+                dpi=300, bbox_inches='tight')
+    plt.close()
+
+def save_piecewise_plots(model, shape, epoch):
+    """Save plots showing the piecewise approximations for each layer"""
+    num_layers = len(model.layers)
+    
+    # Create figure with a subplot for each layer
+    fig, axes = plt.subplots(num_layers, 1, figsize=(12, 5*num_layers))
+    if num_layers == 1:
+        axes = [axes]
+    
+    # For each layer
+    for layer_idx, (layer, ax) in enumerate(zip(model.layers, axes)):
+        positions = layer.positions.data
+        values = layer.values.data
+        
+        # Plot each input-output mapping
+        for in_dim in range(positions.shape[0]):  # For each input dimension
+            for out_dim in range(positions.shape[1]):  # For each output dimension
+                pos = positions[in_dim, out_dim].numpy()
+                val = values[in_dim, out_dim].numpy()
+                ax.plot(pos, val, 'o-')  # Removed label
+        
+        ax.set_title(f'Layer {layer_idx+1} Piecewise Approximations')
+        ax.set_xlabel('Position')
+        ax.set_ylabel('Value')
+        ax.grid(True)
+    
+    plt.tight_layout(pad=3.0)
+    plt.savefig(f'examples/shape_plots/{shape.get_name()}_piecewise_epoch_{epoch:04d}.png',
+                dpi=300, bbox_inches='tight')
+    plt.close()
+
+def save_convergence_plot(shape, losses, points_per_layer):
+    """Save a plot showing loss and points per layer over epochs"""
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+    
+    # Plot loss
+    epochs = range(len(losses))
+    ax1.plot(epochs, losses, 'b-')
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Loss')
+    ax1.set_title(f'Loss Convergence - {shape.get_name()}')
+    ax1.grid(True)
+    
+    # Plot points per layer
+    for i in range(len(points_per_layer[0])):
+        layer_points = [points[i] for points in points_per_layer]
+        ax2.plot(epochs, layer_points, label=f'Layer {i+1}')
+    
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('Number of Points')
+    ax2.set_title('Points per Layer')
+    ax2.legend()
+    ax2.grid(True)
+    
+    plt.tight_layout()
+    plt.savefig(f'examples/shape_plots/{shape.get_name()}_convergence.png',
                 dpi=300, bbox_inches='tight')
     plt.close()
 
@@ -157,11 +205,19 @@ def train_shape_classifier(shape, max_epochs=100, hidden_width=8):
     optimizer = generate_optimizer(model.parameters())
     criterion = nn.MSELoss()  # Binary cross entropy with logits
     
+    # Lists to store convergence data
+    losses = []
+    points_per_layer = []
+    
     # Training loop
     for epoch in range(max_epochs):
         # Forward pass
         y_pred = model(x_train)
         loss = criterion(y_pred, y_train)
+        
+        # Store convergence data
+        losses.append(loss.item())
+        points_per_layer.append([layer.positions.shape[-1] for layer in model.layers])
         
         # Backward pass
         optimizer.zero_grad()
@@ -177,12 +233,15 @@ def train_shape_classifier(shape, max_epochs=100, hidden_width=8):
             if x_error is not None:
                 model.insert_nearby_point(x_error)
                 optimizer = generate_optimizer(model.parameters())
-
         
         # Save progress plot every 10 epochs
         if epoch % 10 == 0:
             print(f"Epoch {epoch}, Loss: {loss.item():.4f}")
             save_progress_plot(model, shape, epoch, loss.item())
+    
+    # Save final convergence plot and piecewise plots
+    save_convergence_plot(shape, losses, points_per_layer)
+    save_piecewise_plots(model, shape, max_epochs-1)
     
     return model
 
