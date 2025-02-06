@@ -65,7 +65,7 @@ def save_progress_plot(model, x, y, epoch, loss, strategy):
 
 # Create synthetic sine wave data
 x = torch.linspace(-1, 1, 1000).reshape(-1, 1)
-y = torch.cos(1/(torch.abs(x)+0.1))
+y = torch.cos(1/(torch.abs(x)+0.05))
 
 # Create a simple model with our non-uniform piecewise linear layer
 class SineApproximator(nn.Module):
@@ -102,7 +102,7 @@ class SineApproximator(nn.Module):
 def generate_optimizer(parameters) :
     #return torch.optim.Adam(parameters,1e-3)
     #return torch.optim.SGD(parameters, lr=1e-2)
-    return torch.optim.Adam(parameters, lr=1e-2)
+    return Lion(parameters, lr=1e-2)
     
 
 # Training parameters
@@ -111,7 +111,7 @@ max_points = 50    # Maximum number of points to add
 min_epochs_between_points = 2000  # Minimum epochs to wait between adding points
 max_epochs_between_points = 100000
 plateau_window = 200  # Window size to check for loss plateau
-plateau_threshold = 0.00001  # Relative improvement threshold to detect plateau
+plateau_threshold = 0.0001  # Relative improvement threshold to detect plateau
 model = SineApproximator(initial_points)
 criterion = nn.MSELoss()
 optimizer = generate_optimizer(model.parameters())
