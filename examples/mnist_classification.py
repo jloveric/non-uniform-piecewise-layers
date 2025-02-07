@@ -8,6 +8,7 @@ import os
 import numpy as np
 from non_uniform_piecewise_layers import AdaptivePiecewiseConv2d
 from lion_pytorch import Lion
+import torch.nn.functional as F
 
 # Set random seed for reproducibility
 torch.manual_seed(42)
@@ -30,9 +31,9 @@ class AdaptiveConvNet(nn.Module):
         self.fc1 = nn.Linear(5*5*8, 10)
 
     def forward(self, x):
-        x = self.pool1(self.relu(self.conv1(x)))
-        x = self.pool2(self.relu(self.conv2(x)))
-        x = x.view(-1, 5*5*8)
+        x = self.pool1(self.conv1(x))
+        x = self.pool2(self.conv2(x))
+        x = x.reshape(-1, 5*5*8)
         x = self.fc1(x)
         return x
 
@@ -44,8 +45,8 @@ class AdaptiveConvNet(nn.Module):
             errors: Prediction errors for the batch
         """
         # Check if we've reached the maximum number of nodes (20 per layer)
-        if (self.conv1.positions.shape[-1] >= 20 or 
-            self.conv2.positions.shape[-1] >= 20):
+        if (self.conv1.piecewise.positions.shape[-1] >= 20 or 
+            self.conv2.piecewise.positions.shape[-1] >= 20):
             return
 
         # Find input corresponding to largest error
@@ -53,18 +54,49 @@ class AdaptiveConvNet(nn.Module):
         if x_error is not None:
             # Forward pass to get intermediate activations for the high-error input
             with torch.no_grad():
-                x1 = self.conv1(x_error)
-                if self.conv1.positions.shape[-1] < 20:
-                    self.conv1.insert_nearby_point(x_error)
+                # For conv1, we want a single 3x3 window where the error is highest
+                # Unfold the input for conv1
+                x1_unfolded = F.unfold(
+                    x_error, 
+                    kernel_size=self.conv1.kernel_size,
+                    padding=self.conv1.padding,
+                    stride=self.conv1.stride
+                )
+                # Reshape to match piecewise layer input shape
+                x1_unfolded = x1_unfolded.transpose(1, 2).contiguous()
+                # Find the window with highest error (using L1 norm)
+                window_errors = torch.abs(x1_unfolded[0]).sum(dim=1)
+                max_window_idx = torch.argmax(window_errors)
+                x1_point = x1_unfolded[0][max_window_idx]
                 
+                if self.conv1.piecewise.positions.shape[-1] < 20:
+                    self.conv1.insert_nearby_point(x1_point)
+                
+                # Get intermediate activation for conv2
+                x1 = self.conv1(x_error)
                 x1 = self.pool1(x1)
-                if self.conv2.positions.shape[-1] < 20:
-                    self.conv2.insert_nearby_point(x1)
+                
+                # For conv2, the dimensions are different since we're working with feature maps
+                x2_unfolded = F.unfold(
+                    x1,
+                    kernel_size=self.conv2.kernel_size,
+                    padding=self.conv2.padding,
+                    stride=self.conv2.stride
+                )
+                x2_unfolded = x2_unfolded.transpose(1, 2).contiguous()
+                # Find window with highest error
+                window_errors = torch.abs(x2_unfolded[0]).sum(dim=1)
+                max_window_idx = torch.argmax(window_errors)
+                x2_point = x2_unfolded[0][max_window_idx]
+                
+                if self.conv2.piecewise.positions.shape[-1] < 20:
+                    self.conv2.insert_nearby_point(x2_point)
 
     def largest_error(self, errors, x):
         """Find the input corresponding to the largest error"""
         max_error_idx = torch.argmax(errors)
-        return x[max_error_idx]
+        # Ensure we return a batch dimension
+        return x[max_error_idx:max_error_idx+1]
 
 def generate_optimizer(parameters):
     """Generate the optimizer for training"""
