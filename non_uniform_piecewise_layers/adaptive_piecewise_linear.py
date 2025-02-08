@@ -113,6 +113,7 @@ class AdaptivePiecewiseLinear(nn.Module):
                 return False
 
             # Check if any point is too close to existing points
+            """
             min_distance = 1e-6
             for i in range(self.num_inputs):
                 for j in range(self.num_outputs):
@@ -122,6 +123,7 @@ class AdaptivePiecewiseLinear(nn.Module):
                     if torch.any(distances < min_distance):
                         print(f"Point {point.item():.6f} too close to existing point in dimension {i}")
                         return False
+            """
 
             # Combine current and new positions
             current_positions = self.positions  # (num_inputs, num_outputs, num_points)
@@ -141,50 +143,72 @@ class AdaptivePiecewiseLinear(nn.Module):
                     sorted_indices = torch.argsort(all_points)
                     sorted_points = all_points[sorted_indices]
                     
-                    # Remove duplicates while preserving order
-                    unique_points, unique_indices = torch.unique_consecutive(sorted_points, return_inverse=True)
-                    
                     # Initialize values for all points
-                    all_values = torch.zeros_like(unique_points)
+                    all_values = torch.zeros_like(sorted_points)
                     
-                    # Copy existing values
-                    existing_mask = unique_points.unsqueeze(1) == pos.unsqueeze(0)
+                    # Create a mask for existing points
+                    existing_mask = sorted_points.unsqueeze(1) == pos.unsqueeze(0)
                     existing_indices = torch.where(existing_mask.any(dim=1))[0]
-                    all_values[existing_indices] = vals[existing_mask.any(dim=0)]
+                    
+                    print(f"Dimension {i}: sorted_points={sorted_points}, pos={pos}, vals={vals}")
+                    print(f"existing_indices={existing_indices}")
+                    
+                    # Copy existing values - for duplicates, they'll all get the same value
+                    for idx in existing_indices:
+                        point_val = vals[existing_mask[idx].nonzero()[0]]
+                        all_values[idx] = point_val
+                        print(f"Setting existing point at idx={idx} to value={point_val}")
                     
                     # Find indices of new points (those not in existing_indices)
-                    new_indices = torch.ones_like(unique_points, dtype=torch.bool)
+                    new_indices = torch.ones_like(sorted_points, dtype=torch.bool)
                     new_indices[existing_indices] = False
                     new_point_indices = torch.where(new_indices)[0]
+                    print(f"new_point_indices={new_point_indices}")
                     
                     # For each new point, interpolate between nearest neighbors
                     for idx in new_point_indices:
-                        point = unique_points[idx]
+                        point = sorted_points[idx]
+                        print(f"Interpolating for point {point}")
                         
-                        # Find nearest existing points
+                        # Find nearest existing points (using original positions)
                         left_mask = pos <= point
                         right_mask = pos > point
+                        print(f"left_mask={left_mask}, right_mask={right_mask}")
                         
                         if not left_mask.any() or not right_mask.any():
                             # If point is outside range, use nearest value
                             nearest_idx = torch.argmin(torch.abs(pos - point))
                             all_values[idx] = vals[nearest_idx]
+                            print(f"Outside range: using nearest value {vals[nearest_idx]}")
                         else:
-                            # Get nearest left and right points
-                            left_idx = torch.where(left_mask)[0][-1]
-                            right_idx = torch.where(right_mask)[0][0]
+                            # Get rightmost left point and leftmost right point
+                            left_idx = torch.where(left_mask)[0][-1]  # rightmost of left points
+                            right_idx = torch.where(right_mask)[0][0]  # leftmost of right points
                             
                             # Linear interpolation between nearest points
                             left_pos = pos[left_idx]
                             right_pos = pos[right_idx]
                             left_val = vals[left_idx]
                             right_val = vals[right_idx]
+                            print(f"Interpolating between left={left_pos}(val={left_val}) and right={right_pos}(val={right_val})")
                             
-                            # Compute interpolated value
-                            t = (point - left_pos) / (right_pos - left_pos)
-                            all_values[idx] = left_val + t * (right_val - left_val)
+                            # If left and right positions are the same, use their value directly
+                            if torch.allclose(left_pos, right_pos):
+                                interpolated_val = left_val  # They should have the same value
+                                print(f"Same position: using left value {left_val}")
+                            else:
+                                # Compute interpolated value
+                                t = (point - left_pos) / (right_pos - left_pos)
+                                interpolated_val = left_val + t * (right_val - left_val)
+                                print(f"Interpolated with t={t} to get value={interpolated_val}")
+                            
+                            # Set this value for all duplicates of this point
+                            duplicate_mask = sorted_points == point
+                            all_values[duplicate_mask] = interpolated_val
+                            print(f"Set value {interpolated_val} for all duplicates of point {point}")
                     
-                    new_pos.append(unique_points)
+                    print(f"Final positions={sorted_points}, values={all_values}")
+                    new_pos.append(sorted_points)
                     new_vals.append(all_values)
             
             # Stack all the new positions and values
@@ -279,16 +303,25 @@ class AdaptivePiecewiseLinear(nn.Module):
         mask = (x_broad >= pos_broad[..., :-1]) & (x_broad < pos_broad[..., 1:])
         
         # Prepare positions and values for vectorized computation
-        x0 = self.positions[..., :-1].unsqueeze(0)
-        x1 = self.positions[..., 1:].unsqueeze(0)
-        y0 = self.values[..., :-1].unsqueeze(0)
-        y1 = self.values[..., 1:].unsqueeze(0)
+        x0 = self.positions[..., :-1].unsqueeze(0)  # left positions
+        x1 = self.positions[..., 1:].unsqueeze(0)   # right positions
+        y0 = self.values[..., :-1].unsqueeze(0)     # left values
+        y1 = self.values[..., 1:].unsqueeze(0)      # right values
         
-        # Compute slopes for all segments at once
-        slopes = (y1 - y0) / (x1 - x0)
+        # Create mask for duplicate points (where left and right positions are equal)
+        duplicate_mask = torch.isclose(x0, x1, rtol=1e-5)
         
-        # Compute all interpolated values at once
-        interpolated = y0 + (x_broad - x0) * slopes
+        # For non-duplicate points, compute slopes and interpolate
+        slopes = torch.zeros_like(x0)
+        non_duplicate_mask = ~duplicate_mask
+        slopes[non_duplicate_mask] = (y1[non_duplicate_mask] - y0[non_duplicate_mask]) / (x1[non_duplicate_mask] - x0[non_duplicate_mask])
+        
+        # Compute interpolated values
+        interpolated = torch.where(
+            duplicate_mask,
+            y0,  # For duplicates, use the left value
+            y0 + (x_broad - x0) * slopes  # For non-duplicates, interpolate
+        )
         
         # Apply mask and sum over the segments dimension
         output = (interpolated * mask).sum(dim=-1)

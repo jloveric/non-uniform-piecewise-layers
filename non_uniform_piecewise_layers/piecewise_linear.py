@@ -171,7 +171,11 @@ class NonUniformPiecewiseLinear(nn.Module):
         with torch.no_grad():
             # Use accumulated absolute gradients as error estimate
             abs_grads = abs_grad  # (num_inputs, num_outputs, num_points)
-            
+
+            # Check if we have any non-zero gradients
+            if torch.all(abs_grads == 0):
+                raise ValueError("No gradients available")
+
             # Find the point with maximum gradient
             max_grad_flat = torch.argmax(abs_grads.view(-1))
             
@@ -251,24 +255,39 @@ class NonUniformPiecewiseLinear(nn.Module):
             
             print('point_idx', point_idx,'split_strategy', split_strategy)
             # Calculate new point position based on strategy
+            insert_idx = point_idx  # Default to current point
             if split_strategy == 0 and point_idx > 0:
                 # Add point halfway to left neighbor
-                left_pos = old_positions[point_idx - 1]
-                curr_pos = old_positions[point_idx]
-                new_pos = (left_pos + curr_pos) / 2
-                new_pos = torch.clamp(new_pos, self.position_min, self.position_max)
-                insert_idx = point_idx
+                        left_pos = old_positions[point_idx - 1]
+                        curr_pos = old_positions[point_idx]
+                        new_pos = (left_pos + curr_pos) / 2
+                        new_pos = torch.clamp(new_pos, self.position_min, self.position_max)
+                        insert_idx = point_idx
             elif split_strategy == 1 and point_idx < self.num_points-1:
                 # Add point halfway to right neighbor
-                curr_pos = old_positions[point_idx]
-                right_pos = old_positions[point_idx + 1]
-                new_pos = (curr_pos + right_pos) / 2
-                new_pos = torch.clamp(new_pos, self.position_min, self.position_max)
-                insert_idx = point_idx + 1
+                        curr_pos = old_positions[point_idx]
+                        right_pos = old_positions[point_idx + 1]
+                        new_pos = (curr_pos + right_pos) / 2
+                        new_pos = torch.clamp(new_pos, self.position_min, self.position_max)
+                        insert_idx = point_idx + 1
+            else:
+                # For edge points, add point halfway to nearest neighbor
+                if point_idx == 0:
+                    curr_pos = old_positions[point_idx]
+                    right_pos = old_positions[point_idx + 1]
+                    new_pos = (curr_pos + right_pos) / 2
+                    new_pos = torch.clamp(new_pos, self.position_min, self.position_max)
+                    insert_idx = point_idx + 1
+                elif point_idx == self.num_points - 1:
+                    left_pos = old_positions[point_idx - 1]
+                    curr_pos = old_positions[point_idx]
+                    new_pos = (left_pos + curr_pos) / 2
+                    new_pos = torch.clamp(new_pos, self.position_min, self.position_max)
+                    insert_idx = point_idx
             
             
             # Linearly interpolate to get the value at the new position
-            if insert_idx > 0 and split_strategy != 2:  
+            if insert_idx > 0:  
                 left_pos = old_positions[insert_idx - 1]
                 left_val = old_values[insert_idx - 1]
                 right_pos = old_positions[insert_idx]
@@ -277,7 +296,7 @@ class NonUniformPiecewiseLinear(nn.Module):
                 # Linear interpolation
                 t = (new_pos - left_pos) / (right_pos - left_pos)
                 new_value = left_val + t * (right_val - left_val)
-            elif insert_idx == 0 and split_strategy != 2:
+            elif insert_idx == 0:
                 # If inserting at the start, use the value of the first point
                 new_value = old_values[0]
             
