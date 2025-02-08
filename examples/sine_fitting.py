@@ -108,8 +108,8 @@ def generate_optimizer(parameters) :
 # Training parameters
 initial_points = 2  # Number of points in piecewise function
 max_points = 50    # Maximum number of points to add
-min_epochs_between_points = 2000  # Minimum epochs to wait between adding points
-max_epochs_between_points = 100000
+min_epochs_between_points = 500  # Minimum epochs to wait between adding points
+max_epochs_between_points = 10000
 plateau_window = 200  # Window size to check for loss plateau
 plateau_threshold = 0.0001  # Relative improvement threshold to detect plateau
 model = SineApproximator(initial_points)
