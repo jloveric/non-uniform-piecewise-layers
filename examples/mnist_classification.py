@@ -8,6 +8,7 @@ import os
 import numpy as np
 from non_uniform_piecewise_layers import AdaptivePiecewiseConv2d
 from lion_pytorch import Lion
+import click
 import torch.nn.functional as F
 
 # Set random seed for reproducibility
@@ -37,16 +38,17 @@ class AdaptiveConvNet(nn.Module):
         x = self.fc1(x)
         return x
 
-    def adapt_layers(self, x, errors):
+    def adapt_layers(self, x, errors, max_points):
         """Adapt the convolutional layers based on prediction errors
         
         Args:
             x: Input batch
             errors: Prediction errors for the batch
+            max_points: Maximum number of points per layer
         """
         # Check if we've reached the maximum number of nodes (20 per layer)
-        if (self.conv1.piecewise.positions.shape[-1] >= 20 or 
-            self.conv2.piecewise.positions.shape[-1] >= 20):
+        if (self.conv1.piecewise.positions.shape[-1] >= max_points or 
+            self.conv2.piecewise.positions.shape[-1] >= max_points):
             return
 
         # Find input corresponding to largest error
@@ -69,7 +71,7 @@ class AdaptiveConvNet(nn.Module):
                 max_window_idx = torch.argmax(window_errors)
                 x1_point = x1_unfolded[0][max_window_idx]
                 
-                if self.conv1.piecewise.positions.shape[-1] < 20:
+                if self.conv1.piecewise.positions.shape[-1] < max_points:
                     self.conv1.insert_nearby_point(x1_point)
                 
                 # Get intermediate activation for conv2
@@ -89,22 +91,25 @@ class AdaptiveConvNet(nn.Module):
                 max_window_idx = torch.argmax(window_errors)
                 x2_point = x2_unfolded[0][max_window_idx]
                 
-                if self.conv2.piecewise.positions.shape[-1] < 20:
+                if self.conv2.piecewise.positions.shape[-1] < max_points:
                     self.conv2.insert_nearby_point(x2_point)
 
     def largest_error(self, errors, x):
         """Find the input corresponding to the largest error"""
         max_error_idx = torch.argmax(errors)
         # Ensure we return a batch dimension
-        return x[max_error_idx:max_error_idx+1]
+        
+        max_error = x[max_error_idx:max_error_idx+1]
+        #print('max_error', max_error)
+        return max_error
 
-def generate_optimizer(parameters):
+def generate_optimizer(parameters, learning_rate):
     """Generate the optimizer for training"""
-    return Lion(parameters, lr=1e-2)
+    return Lion(parameters, lr=learning_rate)
 
-def train(model, train_loader, test_loader, epochs=10, device="cpu"):
+def train(model, train_loader, test_loader, epochs, device, learning_rate, max_points, adapt_frequency):
     criterion = nn.CrossEntropyLoss()
-    optimizer = generate_optimizer(model.parameters())
+    optimizer = generate_optimizer(model.parameters(), learning_rate)
     
     train_losses = []
     test_accuracies = []
@@ -125,21 +130,22 @@ def train(model, train_loader, test_loader, epochs=10, device="cpu"):
             loss.backward()
             optimizer.step()
             
-            # Adapt layers based on error
-            if batch_idx % 100 == 0:
-                _, predicted = torch.max(output.data, 1)
-                errors = (predicted != target).float()
-                model.adapt_layers(data, errors)
-            
             running_loss += loss.item()
             
             if batch_idx % 100 == 0:
                 print(f'Epoch {epoch+1}, Batch {batch_idx}, Loss: {loss.item():.4f}')
-                print(f'Conv1 points: {model.conv1.piecewise.num_points}, Conv2 points: {model.conv2.piecewise.num_points}')
+                print(f'Conv1 points: {model.conv1.piecewise.positions.shape[-1]}, Conv2 points: {model.conv2.piecewise.positions.shape[-1]}')
         
         # Calculate average loss for the epoch
         epoch_loss = running_loss / len(train_loader)
         train_losses.append(epoch_loss)
+        
+        # Only adapt points after each epoch
+        if epoch > 0:  # Skip first epoch to allow initial convergence
+            _, predicted = torch.max(output.data, 1)
+            errors = (predicted != target).float()
+            model.adapt_layers(data, errors, max_points)
+            optimizer = generate_optimizer(model.parameters(), learning_rate)
         
         # Evaluate on test set
         model.eval()
@@ -160,6 +166,9 @@ def train(model, train_loader, test_loader, epochs=10, device="cpu"):
     return train_losses, test_accuracies
 
 def plot_results(train_losses, test_accuracies, save_dir):
+    # Create save directory if it doesn't exist
+    os.makedirs(save_dir, exist_ok=True)
+    
     plt.figure(figsize=(12, 5))
     
     # Plot training loss
@@ -180,16 +189,21 @@ def plot_results(train_losses, test_accuracies, save_dir):
     plt.savefig(os.path.join(save_dir, 'mnist_training_results.png'))
     plt.close()
 
-def main():
-    # Create output directory
-    output_dir = os.path.join(os.path.dirname(__file__), 'output')
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Set device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+@click.command()
+@click.option('--epochs', default=10, help='Number of epochs to train')
+@click.option('--batch-size', default=64, help='Batch size for training')
+@click.option('--learning-rate', default=1e-3, help='Learning rate')
+@click.option('--device', default='cuda', help='Device to use (cuda or cpu)')
+@click.option('--max-points', default=20, help='Maximum number of points per layer')
+@click.option('--adapt-frequency', default=100, help='How often to adapt layers (in batches)')
+def main(epochs, batch_size, learning_rate, device, max_points, adapt_frequency):
+    """Train an adaptive convolutional network on MNIST"""
+    if not torch.cuda.is_available() and device == 'cuda':
+        print("CUDA not available, using CPU instead")
+        device = 'cpu'
     print(f"Using device: {device}")
-    
-    # Load MNIST dataset
+
+    # Create data loaders
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.1307,), (0.3081,))
@@ -198,18 +212,26 @@ def main():
     train_dataset = datasets.MNIST('data', train=True, download=True, transform=transform)
     test_dataset = datasets.MNIST('data', train=False, transform=transform)
     
-    train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=4, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     
-    # Create and train model
-    model = AdaptiveConvNet(num_points=3).to(device)
-    train_losses, test_accuracies = train(model, train_loader, test_loader, epochs=10, device=device)
+    # Create model
+    model = AdaptiveConvNet().to(device)
     
-    # Plot and save results
-    plot_results(train_losses, test_accuracies, output_dir)
+    # Train the model
+    train_losses, test_accuracies = train(
+        model, 
+        train_loader, 
+        test_loader, 
+        epochs=epochs,
+        device=device,
+        learning_rate=learning_rate,
+        max_points=max_points,
+        adapt_frequency=adapt_frequency
+    )
     
-    # Save final model
-    torch.save(model.state_dict(), os.path.join(output_dir, 'mnist_model.pth'))
+    # Plot results
+    plot_results(train_losses, test_accuracies, 'results')
 
 if __name__ == '__main__':
     main()

@@ -23,10 +23,12 @@ class AdaptivePiecewiseLinear(nn.Module):
             torch.linspace(self.position_min, self.position_max, num_points).repeat(num_inputs, num_outputs, 1)
         )
         
-        # Initialize the y values (these are learnable)
-        self.values = nn.Parameter(
-            torch.randn(num_inputs, num_outputs, num_points) * 0.1
-        )
+        # Initialize each input-output pair with a random line (collinear points)
+        start = torch.empty(num_inputs, num_outputs).uniform_(-0.1, 0.1)
+        end = torch.empty(num_inputs, num_outputs).uniform_(-0.1, 0.1)
+        weights = torch.linspace(0, 1, num_points, device=start.device).view(1, 1, num_points)
+        values_line = start.unsqueeze(-1) * (1 - weights) + end.unsqueeze(-1) * weights
+        self.values = nn.Parameter(values_line)
 
         self.num_inputs = num_inputs
         self.num_outputs = num_outputs
@@ -94,7 +96,7 @@ class AdaptivePiecewiseLinear(nn.Module):
             bool: True if points were inserted, False if points were too close to existing ones
         """
         with torch.no_grad():
-            # Ensure points has correct shape (num_inputs,)
+            # Ensure points have correct shape (num_inputs,)
             if points is None:
                 return False
                 
@@ -105,13 +107,21 @@ class AdaptivePiecewiseLinear(nn.Module):
             if points.size(0) != self.num_inputs:
                 raise ValueError(f"Points must have {self.num_inputs} dimensions, got {points.size(0)}")
 
+            # Check if any points are outside [-1, 1] range
+            if torch.any(points < self.position_min) or torch.any(points > self.position_max):
+                print("Rejecting points outside [-1, 1] range")
+                return False
+
             # Check if any point is too close to existing points
             min_distance = 1e-6
             for i in range(self.num_inputs):
-                positions = self.positions[i, 0]  # Use first output dimension as reference
-                distances = torch.abs(positions - points[i])
-                if torch.any(distances < min_distance):
-                    return False
+                for j in range(self.num_outputs):
+                    pos = self.positions[i, j]
+                    point = points[i]
+                    distances = torch.abs(pos - point)
+                    if torch.any(distances < min_distance):
+                        print(f"Point {point.item():.6f} too close to existing point in dimension {i}")
+                        return False
 
             # Combine current and new positions
             current_positions = self.positions  # (num_inputs, num_outputs, num_points)
@@ -185,7 +195,6 @@ class AdaptivePiecewiseLinear(nn.Module):
             self.positions = new_pos
             self.values = nn.Parameter(new_vals)
             self.num_points = new_pos.size(-1)
-            
             return True
 
     def insert_nearby_point(self, point: torch.Tensor) -> bool:
@@ -204,7 +213,8 @@ class AdaptivePiecewiseLinear(nn.Module):
             # Ensure point has correct shape (num_inputs,)
             if point is None:
                 return False
-                
+
+            # Apparently not handeling batch insertion at the moment    
             if point.dim() == 2:
                 # If we get a batch, just take the first one
                 point = point[0]
@@ -221,9 +231,9 @@ class AdaptivePiecewiseLinear(nn.Module):
                 left_mask = positions <= point[i]
                 right_mask = positions > point[i]
                 
-                if not left_mask.any() or not right_mask.any():
+                #if not left_mask.any() or not right_mask.any():
                     # If point is outside range, we can't insert a midpoint
-                    return False
+                #    return False
                 
                 # Get nearest left and right points
                 left_idx = torch.where(left_mask)[0][-1]
@@ -235,10 +245,10 @@ class AdaptivePiecewiseLinear(nn.Module):
                 midpoint = (left_pos + right_pos) / 2
                 
                 # Check if midpoint is too close to existing points
-                min_distance = 1e-6
-                distances = torch.abs(positions - midpoint)
-                if torch.any(distances < min_distance):
-                    return False
+                #min_distance = 1e-6
+                #distances = torch.abs(positions - midpoint)
+                #if torch.any(distances < min_distance):
+                #    return False
                     
                 midpoints.append(midpoint)
             
@@ -329,77 +339,60 @@ class AdaptivePiecewiseLinear(nn.Module):
             abs_grads = abs_grad  # (num_points)
             
             # Find the point with maximum gradient
-            point_idx = torch.argmax(abs_grads)
+            max_error_pos = None
+            max_error = float('-inf')
             
-            # Get current positions and values for the relevant input/output pair
-            old_positions = self.positions[0, 0]  # Since we're using 1 input, 1 output
-            old_values = self.values[0, 0]
+            for i in range(self.num_inputs):
+                for j in range(self.num_outputs):
+                    pos = self.positions[i, j]
+                    error = abs_grad[i, j]
+                    
+                    # Find point with maximum error
+                    max_idx = torch.argmax(error)
+                    curr_max_error = error[max_idx]
+                    
+                    if curr_max_error > max_error:
+                        max_error = curr_max_error
+                        max_error_pos = pos[max_idx]
             
-            # Create new tensors with space for one more point
-            new_positions = torch.zeros(self.num_inputs, self.num_outputs, self.num_points + 1,
-                                     device=self.positions.device)
-            new_values = torch.zeros(self.num_inputs, self.num_outputs, self.num_points + 1,
-                                   device=self.values.device)
+            if max_error_pos is None:
+                return False
             
-            # Copy existing points
-            new_positions[:, :, :self.num_points] = self.positions
-            new_values[:, :, :self.num_points] = self.values
-
-            # Special case: if only 2 points, add point in center
-            if self.num_points == 2:
-                left_pos = old_positions[0]
-                right_pos = old_positions[1]
-                new_pos = (left_pos + right_pos) / 2
-                new_pos = torch.clamp(new_pos, self.position_min, self.position_max)
-                insert_idx = 1
-
-                # Linear interpolation for the new value
-                left_val = old_values[0]
-                right_val = old_values[1]
-                t = 0.5  # Since we're inserting at midpoint
-                new_value = left_val + t * (right_val - left_val)
-            else:
-                # Get errors of left and right neighbors
-                left_error = abs_grads[point_idx - 1] if point_idx > 0 else torch.tensor(-float('inf'))
-                right_error = abs_grads[point_idx + 1] if point_idx < self.num_points - 1 else torch.tensor(-float('inf'))
+            # Find the nearest points to the left and right
+            points = []
+            for i in range(self.num_inputs):
+                positions = self.positions[i, 0]  # Use first output dimension as reference
                 
-                # Choose neighbor with larger error
-                if left_error > right_error:
-                    # Insert between max error point and left neighbor
-                    left_pos = old_positions[point_idx - 1]
-                    right_pos = old_positions[point_idx]
-                    insert_idx = point_idx
-                else:
-                    # Insert between max error point and right neighbor
-                    left_pos = old_positions[point_idx]
-                    right_pos = old_positions[point_idx + 1]
-                    insert_idx = point_idx + 1
+                # Find points to the left and right of max_error_pos
+                left_mask = positions <= max_error_pos
+                right_mask = positions > max_error_pos
                 
-                # Calculate new position halfway between points
-                new_pos = (left_pos + right_pos) / 2
-                new_pos = torch.clamp(new_pos, self.position_min, self.position_max)
+                if not left_mask.any() or not right_mask.any():
+                    continue
                 
-                # Linear interpolation for the new value
-                left_val = old_values[insert_idx - 1]
-                right_val = old_values[insert_idx]
-                t = (new_pos - left_pos) / (right_pos - left_pos)
-                new_value = left_val + t * (right_val - left_val)
+                # Get nearest left and right points
+                left_idx = torch.where(left_mask)[0][-1]
+                right_idx = torch.where(right_mask)[0][0]
+                
+                # Calculate midpoint
+                left_pos = positions[left_idx]
+                right_pos = positions[right_idx]
+                
+                # Don't add points too close to the edges
+                edge_margin = 0.01  # 1% margin from edges
+                if left_pos <= self.position_min + edge_margin or right_pos >= self.position_max - edge_margin:
+                    print(f"Skipping point too close to edge: left={left_pos.item():.6f}, right={right_pos.item():.6f}")
+                    continue
+                
+                midpoint = (left_pos + right_pos) / 2
+                points.append(midpoint)
             
-            # Move all points after insert_idx one position to the right
-            if insert_idx < self.num_points:
-                new_positions[:, :, insert_idx+1:] = self.positions[:, :, insert_idx:]
-                new_values[:, :, insert_idx+1:] = self.values[:, :, insert_idx:]
+            if not points:
+                return False
             
-            # Insert the new point
-            new_positions[:, :, insert_idx] = new_pos
-            new_values[:, :, insert_idx] = new_value
-            
-            # Update the layer's parameters
-            self.positions = new_positions
-            self.values = nn.Parameter(new_values)
-            self.num_points += 1
-            
-            return True
+            # Create tensor of midpoints and insert them
+            points = torch.tensor(points, device=max_error_pos.device)
+            return self.insert_points(points)
 
     def largest_error(self, error: torch.Tensor, x: torch.Tensor, min_distance: float = 1e-6) -> torch.Tensor:
         """

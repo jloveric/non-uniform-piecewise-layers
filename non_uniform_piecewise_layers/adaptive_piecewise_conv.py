@@ -141,7 +141,7 @@ class AdaptivePiecewiseConv2d(nn.Module):
                     midpoint = (left_pos + right_pos) / 2
                     
                     # Check if midpoint is too close to existing points
-                    min_distance = 1e-6
+                    min_distance = 1e-2
                     distances = torch.abs(positions - midpoint)
                     if torch.any(distances < min_distance):
                         continue

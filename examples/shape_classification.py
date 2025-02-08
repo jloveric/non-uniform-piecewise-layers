@@ -188,7 +188,7 @@ def save_convergence_plot(shape, losses, points_per_layer):
 def generate_optimizer(parameters) :
     #return torch.optim.Adam(parameters,1e-3)
     #return torch.optim.SGD(parameters, lr=1e-2)
-    return Lion(parameters, lr=1e-2)
+    return Lion(parameters, lr=1e-3)
 
 def train_shape_classifier(shape, max_epochs=100, hidden_width=8):
     """Train a model to classify points as inside/outside a shape"""
@@ -230,6 +230,7 @@ def train_shape_classifier(shape, max_epochs=100, hidden_width=8):
             with torch.no_grad():
                 error = torch.abs(y_pred - y_train)
             x_error = model.largest_error(error, x_train)
+            print('x_error', x_error)
             if x_error is not None:
                 model.insert_nearby_point(x_error)
                 optimizer = generate_optimizer(model.parameters())

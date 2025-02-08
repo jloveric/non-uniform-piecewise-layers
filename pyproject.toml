@@ -12,6 +12,7 @@ torch = "^2.6.0"
 numpy = "^2.2.2"
 lion-pytorch = "^0.2.3"
 torchvision = "^0.21.0"
+click = "^8.1.8"
 
 
 [tool.poetry.group.dev.dependencies]
