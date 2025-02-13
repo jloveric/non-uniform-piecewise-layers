@@ -3,7 +3,16 @@ import torch.nn as nn
 import numpy as np
 
 class AdaptivePiecewiseLinear(nn.Module):
-    def __init__(self, num_inputs: int, num_outputs: int, num_points: int, position_range=(-1, 1)):
+    def __init__(
+        self,
+        num_inputs: int,
+        num_outputs: int,
+        num_points: int,
+        clamp: bool = False,
+        min_value: float = -1.0,
+        max_value: float = 1.0,
+        position_range=(-1, 1)
+    ):
         """
         Initialize an adaptive piecewise linear layer where positions are not learnable.
         New positions are inserted based on binary search between existing points.
@@ -12,6 +21,9 @@ class AdaptivePiecewiseLinear(nn.Module):
             num_inputs (int): Number of input features
             num_outputs (int): Number of output features
             num_points (int): Initial number of points per piecewise function
+            clamp (bool, optional): Whether to clamp values between min_value and max_value. Defaults to False.
+            min_value (float, optional): Minimum value for clamping. Defaults to -1.0.
+            max_value (float, optional): Maximum value for clamping. Defaults to 1.0.
             position_range (tuple): Tuple of (min, max) for allowed position range. Default is (-1, 1)
         """
         super().__init__()
@@ -33,6 +45,9 @@ class AdaptivePiecewiseLinear(nn.Module):
         self.num_inputs = num_inputs
         self.num_outputs = num_outputs
         self.num_points = num_points
+        self.clamp = clamp
+        self.min_value = min_value
+        self.max_value = max_value
 
     def insert_positions(self, x_values: torch.Tensor):
         """
@@ -290,6 +305,17 @@ class AdaptivePiecewiseLinear(nn.Module):
         Returns:
             torch.Tensor: Output tensor of shape (batch_size, num_outputs)
         """
+        # Ensure x has correct shape (batch_size, num_inputs)
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
+
+        if x.size(1) != self.num_inputs:
+            raise ValueError(f"Input must have {self.num_inputs} dimensions, got {x.size(1)}")
+
+        # Clamp input values if enabled
+        if self.clamp:
+            x = torch.clamp(x, self.min_value, self.max_value)
+
         batch_size = x.shape[0]
         
         # Expand x for broadcasting: (batch_size, num_inputs, 1)
@@ -337,6 +363,10 @@ class AdaptivePiecewiseLinear(nn.Module):
         # Sum over the input dimension to get final output
         output = output.sum(dim=1)
         
+        # Clamp output values if enabled
+        if self.clamp:
+            output = torch.clamp(output, self.min_value, self.max_value)
+
         return output
 
     def compute_abs_grads(self, x):

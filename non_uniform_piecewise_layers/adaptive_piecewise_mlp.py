@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from .adaptive_piecewise_linear import AdaptivePiecewiseLinear
+from typing import List
 
 class AdaptivePiecewiseMLP(nn.Module):
     def __init__(self, width: list, num_points: int = 3, position_range=(-1, 1)):
@@ -9,7 +10,7 @@ class AdaptivePiecewiseMLP(nn.Module):
         Each layer is an AdaptivePiecewiseLinear layer.
         
         Args:
-            width (list): List of widths for each layer. Length should be num_layers + 1
+            width (List[int]): List of widths for each layer. Length should be num_layers + 1
                          where width[i] is the input size to layer i and width[i+1] is the output size.
                          For example, width=[2,4,3,1] creates a 3-layer network with:
                          - Layer 1: 2 inputs, 4 outputs
@@ -46,9 +47,10 @@ class AdaptivePiecewiseMLP(nn.Module):
         Returns:
             torch.Tensor: Output tensor of shape (batch_size, output_width)
         """
+        current = x
         for layer in self.layers:
-            x = layer(x)
-        return x
+            current = layer(current)
+        return current
     
     def largest_error(self, error, x):
         """
@@ -139,5 +141,35 @@ class AdaptivePiecewiseMLP(nn.Module):
             success = True
             for i, layer in enumerate(self.layers):
                 success_ = layer.insert_nearby_point(intermediate_x[i])
+        
+        return success
+
+    def remove_add(self, x):
+        """
+        Remove the smoothest point and add a new point at the specified location
+        for each layer in the MLP.
+
+        Args:
+            x (torch.Tensor): Reference point with shape (batch_size, input_width)
+                specifying where to add the new point.
+
+        Returns:
+            bool: True if points were successfully removed and added in all layers,
+                 False otherwise.
+        """
+        with torch.no_grad():
+            # Forward pass to get intermediate values
+            intermediate_x = [x]
+            current_x = x
+            for layer in self.layers:
+                current_x = layer(current_x)
+                intermediate_x.append(current_x)
+            
+            # Try removing and adding points in each layer
+            success = True
+            for i, layer in enumerate(self.layers):
+                success_ = layer.remove_add(intermediate_x[i])
+                if not success_:
+                    success = False
         
         return success

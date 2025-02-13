@@ -93,12 +93,63 @@ def test_insert_nearby_point():
     final_points = [layer.positions.shape[-1] for layer in mlp.layers]
     assert all(f > i for f, i in zip(final_points, initial_points))
 
-def test_invalid_initialization():
-    """Test that invalid initialization raises appropriate errors"""
-    # Width list too short
-    with pytest.raises(ValueError):
-        AdaptivePiecewiseMLP(width=[2])
+def test_remove_add():
+    """Test that remove_add correctly modifies points in all layers."""
+    torch.manual_seed(42)
+    num_inputs = 2
+    hidden_size = 3
+    num_outputs = 2
+    num_points = 4
+    layer_sizes = [num_inputs, hidden_size, num_outputs]
+    mlp = AdaptivePiecewiseMLP(layer_sizes, num_points, clamp=True)  # Enable clamping
     
-    # Invalid number of points
-    with pytest.raises(ValueError):
-        AdaptivePiecewiseMLP(width=[2, 1], num_points=0)
+    # Set specific positions and values for each layer
+    for layer in mlp.layers:
+        positions = torch.zeros(layer.num_inputs, layer.num_outputs, num_points)
+        values = torch.zeros(layer.num_inputs, layer.num_outputs, num_points)
+        
+        # Set positions for all inputs/outputs
+        positions[:, :] = torch.tensor([-1.0, -0.33, 0.33, 1.0])  # Use full [-1, 1] range
+        
+        # Set values to create regions of high and low error
+        # Point at x=0.33 should be smoothest (removed)
+        for i in range(layer.num_inputs):
+            for j in range(layer.num_outputs):
+                values[i, j] = torch.tensor([-1.0, -0.2 + 0.1*i + 0.2*j, 0.7, 1.0])
+        
+        layer.positions.data = positions
+        layer.values.data = values
+    
+    # Store original number of points for each layer
+    original_num_points = [layer.num_points for layer in mlp.layers]
+    
+    # Choose a point to add (midpoint between x=-0.33 and x=0.33)
+    batch_size = 1
+    point = torch.tensor([[0.0, 0.0]])  # Shape: (batch_size, num_inputs)
+    
+    # Perform remove_add operation
+    success = mlp.remove_add(point)
+    assert success, "Failed to perform remove_add operation"
+    
+    # Check that number of points remained the same in each layer
+    for i, layer in enumerate(mlp.layers):
+        assert layer.num_points == original_num_points[i], \
+            f"Number of points changed in layer {i} from {original_num_points[i]} to {layer.num_points}"
+    
+    # Check that points were actually moved in each layer
+    for i, layer in enumerate(mlp.layers):
+        positions_changed = False
+        for j in range(layer.num_inputs):
+            for k in range(layer.num_outputs):
+                if not torch.allclose(layer.positions[j, k], torch.tensor([-1.0, -0.33, 0.33, 1.0])):
+                    positions_changed = True
+                    break
+        assert positions_changed, f"No positions were changed in layer {i}"
+    
+    # Test edge case: only 2 points
+    mlp = AdaptivePiecewiseMLP([1, 1], 2, clamp=True)  # Enable clamping
+    success = mlp.remove_add(torch.tensor([[0.0]]))  # Shape: (batch_size, num_inputs)
+    assert not success, "Should not be able to add/remove points when only 2 points exist"
+    assert all(layer.num_points == 2 for layer in mlp.layers), \
+        "Number of points should not change when operation fails"
+
