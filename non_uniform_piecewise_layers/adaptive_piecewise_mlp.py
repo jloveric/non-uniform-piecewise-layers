@@ -4,7 +4,7 @@ from .adaptive_piecewise_linear import AdaptivePiecewiseLinear
 from typing import List
 
 class AdaptivePiecewiseMLP(nn.Module):
-    def __init__(self, width: list, num_points: int = 3, position_range=(-1, 1)):
+    def __init__(self, width: list, num_points: int = 3, position_range=(-1, 1), anti_periodic:bool=True):
         """
         Initialize a multi-layer perceptron with adaptive piecewise linear layers.
         Each layer is an AdaptivePiecewiseLinear layer.
@@ -27,13 +27,16 @@ class AdaptivePiecewiseMLP(nn.Module):
         if num_points < 2:
             raise ValueError(f"Number of points must be at least 2, got {num_points}")
         
+        self.anti_periodic=anti_periodic
+
         # Create layers
         self.layers = nn.ModuleList([
             AdaptivePiecewiseLinear(
                 num_inputs=width[i],
                 num_outputs=width[i+1],
                 num_points=num_points,
-                position_range=position_range
+                position_range=position_range,
+                anti_periodic=anti_periodic
             ) for i in range(len(width)-1)
         ])
     

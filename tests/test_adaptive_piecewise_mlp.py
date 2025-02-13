@@ -101,7 +101,7 @@ def test_remove_add():
     num_outputs = 2
     num_points = 4
     layer_sizes = [num_inputs, hidden_size, num_outputs]
-    mlp = AdaptivePiecewiseMLP(layer_sizes, num_points, clamp=True)  # Enable clamping
+    mlp = AdaptivePiecewiseMLP(layer_sizes, num_points)
     
     # Set specific positions and values for each layer
     for layer in mlp.layers:
@@ -147,7 +147,7 @@ def test_remove_add():
         assert positions_changed, f"No positions were changed in layer {i}"
     
     # Test edge case: only 2 points
-    mlp = AdaptivePiecewiseMLP([1, 1], 2, clamp=True)  # Enable clamping
+    mlp = AdaptivePiecewiseMLP([1, 1], 2)  # Enable clamping
     success = mlp.remove_add(torch.tensor([[0.0]]))  # Shape: (batch_size, num_inputs)
     assert not success, "Should not be able to add/remove points when only 2 points exist"
     assert all(layer.num_points == 2 for layer in mlp.layers), \
