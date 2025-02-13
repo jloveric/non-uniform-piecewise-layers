@@ -468,3 +468,67 @@ class AdaptivePiecewiseLinear(nn.Module):
             
             # If we get here, no valid point was found
             return None
+
+    def compute_removal_errors(self):
+        """
+        Compute the error that would occur if each point (except endpoints) were removed.
+        The error is calculated as the absolute difference between the current value at the point
+        and the interpolated value that would occur if the point were removed.
+        
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: A tuple containing:
+                - errors: Tensor of shape (num_inputs, num_outputs, num_points-2) containing the errors
+                - indices: Tensor of shape (num_inputs, num_outputs, num_points-2) containing the indices
+                  corresponding to each error, excluding the endpoints
+        """
+        with torch.no_grad():
+            # We'll store errors for all points except endpoints
+            errors = []
+            indices = []
+            
+            for i in range(self.num_inputs):
+                for j in range(self.num_outputs):
+                    pos = self.positions[i, j]  # Current positions for this i,j
+                    vals = self.values[i, j]    # Current values for this i,j
+                    
+                    # Skip if we only have 2 points (endpoints)
+                    if len(pos) <= 2:
+                        continue
+                    
+                    # Calculate error for each internal point
+                    point_errors = []
+                    point_indices = []
+                    
+                    for idx in range(1, len(pos)-1):
+                        # Get current value at the point
+                        current_value = vals[idx]
+                        point = pos[idx]
+                        
+                        # Get left and right neighbors
+                        left_pos = pos[idx-1]
+                        right_pos = pos[idx+1]
+                        left_val = vals[idx-1]
+                        right_val = vals[idx+1]
+                        
+                        # Calculate interpolated value if point were removed
+                        t = (point - left_pos) / (right_pos - left_pos)
+                        interpolated_val = left_val + t * (right_val - left_val)
+                        
+                        # Calculate error
+                        error = torch.abs(current_value - interpolated_val)
+                        
+                        point_errors.append(error)
+                        point_indices.append(idx)
+                    
+                    if point_errors:  # Only append if we have any errors
+                        errors.append(torch.stack(point_errors))
+                        indices.append(torch.tensor(point_indices, device=pos.device))
+            
+            # Stack all errors and indices
+            if not errors:  # Handle case where we have no internal points
+                return torch.tensor([]), torch.tensor([])
+                
+            errors = torch.stack([e for e in errors]).reshape(self.num_inputs, self.num_outputs, -1)
+            indices = torch.stack([i for i in indices]).reshape(self.num_inputs, self.num_outputs, -1)
+            
+            return errors, indices
