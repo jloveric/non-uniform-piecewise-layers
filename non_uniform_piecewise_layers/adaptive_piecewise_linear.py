@@ -216,7 +216,7 @@ class AdaptivePiecewiseLinear(nn.Module):
             new_vals = torch.stack([v for v in new_vals]).reshape(self.num_inputs, self.num_outputs, -1)
             
             # Update the buffers and parameters
-            self.positions = new_pos
+            self.positions = nn.Parameter(new_pos)
             self.values = nn.Parameter(new_vals)
             self.num_points = new_pos.size(-1)
             return True
@@ -471,64 +471,139 @@ class AdaptivePiecewiseLinear(nn.Module):
 
     def compute_removal_errors(self):
         """
-        Compute the error that would occur if each point (except endpoints) were removed.
-        The error is calculated as the absolute difference between the current value at the point
-        and the interpolated value that would occur if the point were removed.
-        
+        Compute the error that would occur if each internal point were removed.
+        The error is computed by comparing the linear interpolation between
+        adjacent points with the actual value at the removed point.
+
+        For duplicate points (points at the same x position), the error is set to 0
+        to ensure they are prioritized for removal over points that are collinear
+        but not duplicates.
+
         Returns:
-            Tuple[torch.Tensor, torch.Tensor]: A tuple containing:
-                - errors: Tensor of shape (num_inputs, num_outputs, num_points-2) containing the errors
-                - indices: Tensor of shape (num_inputs, num_outputs, num_points-2) containing the indices
-                  corresponding to each error, excluding the endpoints
+            Tuple[Tensor, Tensor]: A tuple containing:
+                - errors: Tensor of shape (num_inputs, num_outputs, num_points-2)
+                  containing the error for removing each internal point
+                - indices: Tensor of shape (num_inputs, num_outputs, num_points-2)
+                  containing the indices of the points that would be removed
         """
         with torch.no_grad():
-            # We'll store errors for all points except endpoints
-            errors = []
-            indices = []
+            # Initialize error tensors
+            errors = torch.zeros(self.num_inputs, self.num_outputs, self.num_points - 2)
+            indices = torch.zeros(self.num_inputs, self.num_outputs, self.num_points - 2, dtype=torch.long)
             
+            # For each input-output pair
             for i in range(self.num_inputs):
                 for j in range(self.num_outputs):
-                    pos = self.positions[i, j]  # Current positions for this i,j
-                    vals = self.values[i, j]    # Current values for this i,j
+                    # Get positions and values for this input-output pair
+                    pos = self.positions[i, j]
+                    vals = self.values[i, j]
                     
-                    # Skip if we only have 2 points (endpoints)
-                    if len(pos) <= 2:
-                        continue
-                    
-                    # Calculate error for each internal point
-                    point_errors = []
-                    point_indices = []
-                    
-                    for idx in range(1, len(pos)-1):
-                        # Get current value at the point
-                        current_value = vals[idx]
-                        point = pos[idx]
+                    # First check for duplicate points
+                    # For each point, check if it has the same position as any other point
+                    for k in range(1, self.num_points - 1):  # Skip endpoints
+                        # Find all points with the same position
+                        duplicates = torch.where(torch.isclose(pos[k], pos))[0]
+                        if duplicates.size(0) > 1:  # If we found duplicates
+                            # Set error to 0 to prioritize removing this point
+                            errors[i, j, k-1] = 0
+                            indices[i, j, k-1] = k
+                            continue
                         
-                        # Get left and right neighbors
-                        left_pos = pos[idx-1]
-                        right_pos = pos[idx+1]
-                        left_val = vals[idx-1]
-                        right_val = vals[idx+1]
+                        # For non-duplicate points, compute removal error
+                        # Get left and right points
+                        left_pos = pos[k-1]
+                        right_pos = pos[k+1]
+                        left_val = vals[k-1]
+                        right_val = vals[k+1]
                         
-                        # Calculate interpolated value if point were removed
-                        t = (point - left_pos) / (right_pos - left_pos)
-                        interpolated_val = left_val + t * (right_val - left_val)
+                        # Compute interpolated value at the point being removed
+                        t = (pos[k] - left_pos) / (right_pos - left_pos)
+                        interp_val = left_val + t * (right_val - left_val)
                         
-                        # Calculate error
-                        error = torch.abs(current_value - interpolated_val)
-                        
-                        point_errors.append(error)
-                        point_indices.append(idx)
-                    
-                    if point_errors:  # Only append if we have any errors
-                        errors.append(torch.stack(point_errors))
-                        indices.append(torch.tensor(point_indices, device=pos.device))
+                        # Compute error as absolute difference
+                        error = abs(interp_val - vals[k])
+                        errors[i, j, k-1] = error
+                        indices[i, j, k-1] = k
             
-            # Stack all errors and indices
-            if not errors:  # Handle case where we have no internal points
-                return torch.tensor([]), torch.tensor([])
-                
-            errors = torch.stack([e for e in errors]).reshape(self.num_inputs, self.num_outputs, -1)
-            indices = torch.stack([i for i in indices]).reshape(self.num_inputs, self.num_outputs, -1)
+            print("Errors:", errors)
+            print("Indices:", indices)
             
             return errors, indices
+
+    def remove_smoothest_point(self):
+        """
+        Remove the point with the smallest removal error from each input-output pair.
+        This point represents where the function is most linear (smoothest).
+        The leftmost and rightmost points cannot be removed.
+        
+        Returns:
+            bool: True if any points were removed, False if no points could be removed
+                 (e.g., if there are only 2 points).
+        """
+        with torch.no_grad():
+            # Get removal errors and indices
+            errors, indices = self.compute_removal_errors()
+            print(f"Errors: {errors}")
+            print(f"Indices: {indices}")
+            
+            # If we have no removable points, return False
+            if errors.numel() == 0:
+                return False
+            
+            # Find the index of the point with minimum error for each input-output pair
+            min_error_indices = torch.argmin(errors, dim=-1)  # Shape: (num_inputs, num_outputs)
+            print(f"Min error indices: {min_error_indices}")
+            
+            # Get the actual indices to remove for each input-output pair
+            points_to_remove = torch.gather(indices, -1, min_error_indices.unsqueeze(-1)).squeeze(-1)
+            print(f"Points to remove: {points_to_remove}")
+            
+            # Create new positions and values tensors with one less point per input-output pair
+            new_num_points = self.num_points - 1
+            new_positions = torch.zeros(self.num_inputs, self.num_outputs, new_num_points, device=self.positions.device)
+            new_values = torch.zeros(self.num_inputs, self.num_outputs, new_num_points, device=self.values.device)
+            
+            # For each input-output pair, remove the point with minimum error
+            for i in range(self.num_inputs):
+                for j in range(self.num_outputs):
+                    idx_to_remove = points_to_remove[i, j].item()  # Convert to Python int
+                    print(f"Removing point {idx_to_remove} for input {i}, output {j}")
+                    mask = torch.ones(self.num_points, dtype=torch.bool, device=self.positions.device)
+                    mask[idx_to_remove] = False
+                    
+                    # Keep all points except the one being removed
+                    new_positions[i, j] = self.positions[i, j][mask]
+                    new_values[i, j] = self.values[i, j][mask]
+            
+            # Update the layer's positions and values
+            self.positions = nn.Parameter(new_positions)  # Make positions a parameter too
+            self.values = nn.Parameter(new_values)
+            self.num_points = new_num_points
+            
+            return True
+
+    def remove_add(self, point):
+        """
+        Maintains a constant number of points by first removing the smoothest points
+        (where the function is most linear) and then adding a point at the specified
+        location.
+        
+        Args:
+            point: A tuple (x, y) specifying where to add the new point after removal.
+                  This is typically a point where the error is highest.
+        
+        Returns:
+            bool: True if points were successfully removed and added, False if either
+                 operation failed (e.g., if there are only 2 points).
+        """
+        
+        # First remove the smoothest points
+        if not self.remove_smoothest_point():
+            return False
+            
+        # Then add point at the specified location
+        if not self.insert_nearby_point(point):
+            return False
+            
+             
+        return True

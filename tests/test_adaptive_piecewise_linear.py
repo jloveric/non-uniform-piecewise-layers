@@ -126,6 +126,56 @@ def test_compute_removal_errors():
     assert errors.shape == (2, 2, 2), f"Expected error shape (2,2,2), got {errors.shape}"
     assert indices.shape == (2, 2, 2), f"Expected indices shape (2,2,2), got {indices.shape}"
 
+def test_compute_removal_errors_duplicates():
+    """Test that compute_removal_errors prioritizes duplicate points for removal."""
+    num_inputs = 1
+    num_outputs = 1
+    num_points = 5
+    layer = AdaptivePiecewiseLinear(num_inputs, num_outputs, num_points)
+    
+    # Create a scenario with:
+    # - Two points at x=0.5 (duplicates)
+    # - One point at x=0.75 that is perfectly collinear (zero error)
+    positions = torch.tensor([0.0, 0.5, 0.5, 0.75, 1.0]).reshape(1, 1, -1)
+    values = torch.tensor([0.0, 0.5, 0.5, 0.75, 1.0]).reshape(1, 1, -1)
+    
+    layer.positions = torch.nn.Parameter(positions)
+    layer.values = torch.nn.Parameter(values)
+    
+    errors, indices = layer.compute_removal_errors()
+    
+    # We expect:
+    # 1. Both points at x=0.5 should have zero error
+    # 2. Point at x=0.75 should also have zero error (it's collinear)
+    # 3. When removing points, duplicates should be prioritized over collinear points
+    
+    # Check that we got the expected number of errors (num_points - 2 = 3)
+    assert errors.shape == (1, 1, 3), f"Expected shape (1, 1, 3), got {errors.shape}"
+    
+    # Check that all errors are zero (both duplicates and collinear point)
+    assert torch.allclose(errors, torch.zeros_like(errors)), \
+        "Expected all errors to be zero"
+    
+    # Check indices are correct (should be [1, 2, 3] for the internal points)
+    assert torch.allclose(indices[0, 0], torch.tensor([1, 2, 3])), \
+        f"Expected indices [1, 2, 3], got {indices[0, 0]}"
+    
+    # Now test remove_smoothest_point to ensure it picks one of the duplicates
+    success = layer.remove_smoothest_point()
+    assert success, "Failed to remove point"
+    
+    # After removal, we should have 4 points, with only one point at x=0.5
+    assert layer.num_points == 4, f"Expected 4 points after removal, got {layer.num_points}"
+    
+    # Count how many points are at x=0.5
+    points_at_half = torch.sum(torch.isclose(layer.positions[0, 0], torch.tensor(0.5)))
+    assert points_at_half == 1, \
+        f"Expected 1 point at x=0.5 after removal, got {points_at_half}"
+    
+    # The collinear point at x=0.75 should still be there
+    assert torch.any(torch.isclose(layer.positions[0, 0], torch.tensor(0.75))), \
+        "Point at x=0.75 was incorrectly removed"
+
 def test_compute_removal_errors_edge_cases():
     # Test with minimum number of points (2)
     layer = AdaptivePiecewiseLinear(num_inputs=1, num_outputs=1, num_points=2)
@@ -219,3 +269,138 @@ def test_compute_removal_errors_3in_2out():
     # Note: Due to numerical precision in torch.linspace, we use a larger tolerance
     assert torch.all(errors[1, 0] < 0.01), f"Expected small errors for linear case, got {errors[1, 0]}"
     assert torch.all(errors[1, 1] < 0.01), f"Expected small errors for linear case, got {errors[1, 1]}"
+
+def test_remove_smoothest_point():
+    torch.manual_seed(42)
+    num_inputs = 2
+    num_outputs = 2
+    num_points = 4
+    layer = AdaptivePiecewiseLinear(num_inputs, num_outputs, num_points)
+    
+    # Set specific positions and values for testing
+    positions = torch.zeros(num_inputs, num_outputs, num_points)
+    values = torch.zeros(num_inputs, num_outputs, num_points)
+    
+    # Set positions for all inputs/outputs
+    positions[:, :] = torch.tensor([0.0, 0.33, 0.67, 1.0])
+    
+    # Set values for input 0, output 0 - point at x=0.67 should be smoothest
+    # because it's closest to linear interpolation between its neighbors
+    values[0, 0] = torch.tensor([0.0, 0.5, 0.8, 1.0])
+    
+    # Set values for input 0, output 1 - point at x=0.67 should be smoothest
+    values[0, 1] = torch.tensor([0.0, 0.3, 0.9, 1.2])
+    
+    # Set values for input 1, output 0 - point at x=0.67 should be smoothest
+    values[1, 0] = torch.tensor([0.0, 0.4, 0.7, 1.0])
+    
+    # Set values for input 1, output 1 - point at x=0.67 should be smoothest
+    # by making it very close to linear interpolation between its neighbors
+    values[1, 1] = torch.tensor([0.0, 0.2, 0.7, 1.0])
+    
+    layer.positions.data = positions
+    layer.values.data = values
+    
+    # Store original values for comparison
+    original_positions = positions.clone()
+    original_values = values.clone()
+    
+    # Remove smoothest points
+    success = layer.remove_smoothest_point()
+    assert success, "Failed to remove points"
+    
+    # Check that we have one less point
+    assert layer.num_points == num_points - 1, "Number of points did not decrease"
+    
+    # Check that the removed points were correct
+    # For input 0, output 0: point at x=0.67 (index 2) should be removed
+    assert not torch.any(layer.positions[0, 0] == original_positions[0, 0, 2]), \
+        "Point at x=0.67 was not removed from input 0, output 0"
+    
+    # For input 0, output 1: point at x=0.67 (index 2) should be removed
+    assert not torch.any(layer.positions[0, 1] == original_positions[0, 1, 2]), \
+        "Point at x=0.67 was not removed from input 0, output 1"
+    
+    # For input 1, output 0: point at x=0.67 (index 2) should be removed
+    assert not torch.any(layer.positions[1, 0] == original_positions[1, 0, 2]), \
+        "Point at x=0.67 was not removed from input 1, output 0"
+    
+    # For input 1, output 1: point at x=0.67 (index 2) should be removed
+    assert not torch.any(layer.positions[1, 1] == original_positions[1, 1, 2]), \
+        "Point at x=0.67 was not removed from input 1, output 1"
+    
+    # Test edge case: only 2 points
+    layer = AdaptivePiecewiseLinear(num_inputs=1, num_outputs=1, num_points=2)
+    success = layer.remove_smoothest_point()
+    assert not success, "Should not be able to remove points when only 2 points exist"
+    assert layer.num_points == 2, "Number of points should not change when removal fails"
+
+def test_remove_add():
+    torch.manual_seed(42)
+    num_inputs = 2
+    num_outputs = 2
+    num_points = 4
+    layer = AdaptivePiecewiseLinear(num_inputs, num_outputs, num_points)
+    
+    # Set specific positions and values for testing
+    positions = torch.zeros(num_inputs, num_outputs, num_points)
+    values = torch.zeros(num_inputs, num_outputs, num_points)
+    
+    # Set positions for all inputs/outputs
+    positions[:, :] = torch.tensor([0.0, 0.33, 0.67, 1.0])
+    
+    # Set values to create regions of high and low error
+    # For input 0, output 0: point at x=0.67 should be smoothest (removed)
+    # and gap between x=0.33 and x=0.67 should have highest error (added)
+    values[0, 0] = torch.tensor([0.0, 0.5, 0.8, 1.0])
+    
+    # For input 0, output 1: similar pattern
+    values[0, 1] = torch.tensor([0.0, 0.3, 0.9, 1.2])
+    
+    # For input 1, output 0: similar pattern
+    values[1, 0] = torch.tensor([0.0, 0.4, 0.7, 1.0])
+    
+    # For input 1, output 1: similar pattern
+    values[1, 1] = torch.tensor([0.0, 0.2, 0.7, 1.0])
+    
+    layer.positions.data = positions
+    layer.values.data = values
+    
+    # Store original values for comparison
+    original_positions = positions.clone()
+    original_values = values.clone()
+    original_num_points = layer.num_points
+    
+    # Choose a point to add (midpoint between x=0.33 and x=0.67)
+    point = torch.tensor([0.5, 0.5])  # Same x=0.5 for both inputs
+    
+    # Perform remove_add operation
+    success = layer.remove_add(point)
+    assert success, "Failed to perform remove_add operation"
+    
+    # Check that number of points remained the same
+    assert layer.num_points == original_num_points, \
+        f"Number of points changed from {original_num_points} to {layer.num_points}"
+    
+    # Check that points were actually moved (positions changed)
+    positions_changed = False
+    for i in range(num_inputs):
+        for j in range(num_outputs):
+            if not torch.allclose(layer.positions[i, j], original_positions[i, j]):
+                positions_changed = True
+                break
+    assert positions_changed, "No positions were changed during remove_add"
+    
+    # Check that endpoints were preserved
+    for i in range(num_inputs):
+        for j in range(num_outputs):
+            assert torch.allclose(layer.positions[i, j, 0], original_positions[i, j, 0]), \
+                "Left endpoint was modified"
+            assert torch.allclose(layer.positions[i, j, -1], original_positions[i, j, -1]), \
+                "Right endpoint was modified"
+    
+    # Test edge case: only 2 points
+    layer = AdaptivePiecewiseLinear(num_inputs=1, num_outputs=1, num_points=2)
+    success = layer.remove_add(torch.tensor([0.5]))  # Only 1 input for this layer
+    assert not success, "Should not be able to add/remove points when only 2 points exist"
+    assert layer.num_points == 2, "Number of points should not change when operation fails"
