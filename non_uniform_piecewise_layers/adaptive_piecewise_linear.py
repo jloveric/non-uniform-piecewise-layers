@@ -30,6 +30,7 @@ class AdaptivePiecewiseLinear(nn.Module):
         weights = torch.linspace(0, 1, num_points, device=start.device).view(1, 1, num_points)
         values_line = start.unsqueeze(-1) * (1 - weights) + end.unsqueeze(-1) * weights
         self.values = nn.Parameter(values_line)
+        print('self.positions',self.positions)
 
         self.num_inputs = num_inputs
         self.num_outputs = num_outputs
@@ -217,8 +218,11 @@ class AdaptivePiecewiseLinear(nn.Module):
             new_pos = torch.stack([p for p in new_pos]).reshape(self.num_inputs, self.num_outputs, -1)
             new_vals = torch.stack([v for v in new_vals]).reshape(self.num_inputs, self.num_outputs, -1)
             
+            #new_pos[:,:,0]=-1.0
+            #new_pos[:,:,-1]=1.0
+
             # Update the buffers and parameters
-            self.positions = nn.Parameter(new_pos)
+            self.positions.data= new_pos
             self.values = nn.Parameter(new_vals)
             self.num_points = new_pos.size(-1)
             return True
@@ -235,6 +239,8 @@ class AdaptivePiecewiseLinear(nn.Module):
         Returns:
             bool: True if a point was inserted, False otherwise
         """
+        point = make_antiperiodic(point)
+
         with torch.no_grad():
             # Ensure point has correct shape (num_inputs,)
             if point is None:
@@ -262,6 +268,7 @@ class AdaptivePiecewiseLinear(nn.Module):
                 #    return False
                 
                 # Get nearest left and right points
+                print('point[i]', point[i], positions)
                 left_idx = torch.where(left_mask)[0][-1]
                 right_idx = torch.where(right_mask)[0][0]
                 
@@ -581,7 +588,7 @@ class AdaptivePiecewiseLinear(nn.Module):
                     new_values[i, j] = self.values[i, j][mask]
             
             # Update the layer's positions and values
-            self.positions = nn.Parameter(new_positions)  # Make positions a parameter too
+            self.positions.data = new_positions  # Make positions a parameter too
             self.values = nn.Parameter(new_values)
             self.num_points = new_num_points
             

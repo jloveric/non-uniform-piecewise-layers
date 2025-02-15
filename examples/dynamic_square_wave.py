@@ -79,7 +79,7 @@ learning_rate = 0.01
 
 # Create model and optimizer
 model = AdaptivePiecewiseMLP(
-    width=[1, 10, 10, 1],  # Input dim: 1, Hidden layers: 10, Output dim: 1
+    width=[1, 1],  # Input dim: 1, Hidden layers: 10, Output dim: 1
     num_points=num_points,
     position_range=(-1, 1)
 )
