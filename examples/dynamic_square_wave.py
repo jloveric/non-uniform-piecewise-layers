@@ -76,8 +76,8 @@ x = torch.linspace(-1, 1, 1000).reshape(-1, 1)
 # Training parameters
 num_points = 10  # Initial number of points in piecewise function
 num_epochs = 400  # Total number of epochs
-switch_epoch = 100  # Epoch at which to switch the square wave position
-learning_rate = 0.001
+switch_epoch = 200  # Epoch at which to switch the square wave position
+learning_rate = 0.01
 
 # Create model and optimizer
 model = AdaptivePiecewiseMLP(
@@ -114,6 +114,7 @@ for epoch in range(num_epochs):
     # Call remove_add after each epoch
     error = torch.abs(y_pred-y)
     new_value = model.largest_error(error, x)
+    print('new_value', new_value)
     model.remove_add(new_value)
     optimizer=generate_optimizer(model.parameters(),learning_rate)
     

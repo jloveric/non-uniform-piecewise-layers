@@ -91,11 +91,11 @@ inputs = torch.stack([xx.flatten(), yy.flatten()], dim=1)
 num_points = 20  # Initial number of points in piecewise function
 num_epochs = 400  # Total number of epochs
 switch_epoch = 200  # Epoch at which to switch the circle position
-learning_rate = 0.001
+learning_rate = 0.00001
 
 # Create model and optimizer
 model = AdaptivePiecewiseMLP(
-    width=[2, 5,5, 1],  # Input dim: 2, Hidden layers: 32, Output dim: 1
+    width=[2, 3,3, 1],  # Input dim: 2, Hidden layers: 32, Output dim: 1
     num_points=num_points,
     position_range=(-1, 1)
 )
@@ -120,11 +120,13 @@ for epoch in range(num_epochs):
         outputs = generate_circle_data(xx.flatten(), yy.flatten(), 'upper_right')
         position = 'upper_right'
     
+    #print('torch.max',torch.max(outputs),torch.min(outputs))
+
     # Forward pass
-    predictions = model(inputs)
-    loss = nn.MSELoss()(predictions, outputs)
     
-    # Backward pass and optimization
+    predictions = model(inputs)
+    print('max predictions', torch.max(predictions),torch.min(predictions))
+    loss = nn.MSELoss()(predictions, outputs)
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
@@ -134,9 +136,12 @@ for epoch in range(num_epochs):
     epochs.append(epoch)
 
     error = torch.abs(predictions-outputs)
+    #print('max error', torch.max(error))
     new_value = model.largest_error(error, inputs)
-    model.remove_add(new_value)
-    optimizer=generate_optimizer(model.parameters(),learning_rate)
+    if new_value is not None:
+        success=model.remove_add(new_value)
+        #print('success', success)
+        optimizer=generate_optimizer(model.parameters(),learning_rate)
     
     # Save progress plot every 10 epochs
     if epoch % 10 == 0:
