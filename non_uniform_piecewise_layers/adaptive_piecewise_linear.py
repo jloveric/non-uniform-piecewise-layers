@@ -156,7 +156,7 @@ class AdaptivePiecewiseLinear(nn.Module):
                     for idx in existing_indices:
                         point_val = vals[existing_mask[idx].nonzero()[0]]
                         all_values[idx] = point_val
-                        print(f"Setting existing point at idx={idx} to value={point_val}")
+                        #print(f"Setting existing point at idx={idx} to value={point_val}")
                     
                     # Find indices of new points (those not in existing_indices)
                     new_indices = torch.ones_like(sorted_points, dtype=torch.bool)

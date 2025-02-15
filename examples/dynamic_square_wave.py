@@ -77,7 +77,7 @@ x = torch.linspace(-1, 1, 1000).reshape(-1, 1)
 num_points = 10  # Initial number of points in piecewise function
 num_epochs = 400  # Total number of epochs
 switch_epoch = 100  # Epoch at which to switch the square wave position
-learning_rate = 0.01
+learning_rate = 0.001
 
 # Create model and optimizer
 model = AdaptivePiecewiseMLP(
