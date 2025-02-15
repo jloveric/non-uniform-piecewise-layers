@@ -157,7 +157,6 @@ for epoch in range(num_epochs):
         position = 'upper_right'
 
     batched_out = outputs.unsqueeze(1)
-    position = 'lower_left'
 
     # Forward pass
     predictions = model(inputs)
