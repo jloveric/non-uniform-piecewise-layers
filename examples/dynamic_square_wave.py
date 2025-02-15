@@ -107,7 +107,9 @@ for epoch in range(num_epochs):
     optimizer.step()
     
     # Call remove_add after each epoch
-    model.remove_add(x)
+    error = torch.pow(torch.abs(y_pred-y),0.1)
+    new_value = model.largest_error(error, x)
+    model.remove_add(new_value)
     optimizer=generate_optimizer(model.parameters(),learning_rate)
     
     # Save progress plot every 10 epochs

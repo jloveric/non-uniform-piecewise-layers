@@ -171,18 +171,15 @@ class AdaptivePiecewiseLinear(nn.Module):
                     # For each new point, interpolate between nearest neighbors
                     for idx in new_point_indices:
                         point = sorted_points[idx]
-                        print(f"Interpolating for point {point}")
                         
                         # Find nearest existing points (using original positions)
                         left_mask = pos <= point
                         right_mask = pos > point
-                        print(f"left_mask={left_mask}, right_mask={right_mask}")
                         
                         if not left_mask.any() or not right_mask.any():
                             # If point is outside range, use nearest value
                             nearest_idx = torch.argmin(torch.abs(pos - point))
                             all_values[idx] = vals[nearest_idx]
-                            print(f"Outside range: using nearest value {vals[nearest_idx]}")
                         else:
                             # Get rightmost left point and leftmost right point
                             left_idx = torch.where(left_mask)[0][-1]  # rightmost of left points
@@ -193,24 +190,19 @@ class AdaptivePiecewiseLinear(nn.Module):
                             right_pos = pos[right_idx]
                             left_val = vals[left_idx]
                             right_val = vals[right_idx]
-                            print(f"Interpolating between left={left_pos}(val={left_val}) and right={right_pos}(val={right_val})")
                             
                             # If left and right positions are the same, use their value directly
                             if torch.allclose(left_pos, right_pos):
                                 interpolated_val = left_val  # They should have the same value
-                                print(f"Same position: using left value {left_val}")
                             else:
                                 # Compute interpolated value
                                 t = (point - left_pos) / (right_pos - left_pos)
                                 interpolated_val = left_val + t * (right_val - left_val)
-                                print(f"Interpolated with t={t} to get value={interpolated_val}")
                             
                             # Set this value for all duplicates of this point
                             duplicate_mask = sorted_points == point
                             all_values[duplicate_mask] = interpolated_val
-                            print(f"Set value {interpolated_val} for all duplicates of point {point}")
                     
-                    print(f"Final positions={sorted_points}, values={all_values}")
                     new_pos.append(sorted_points)
                     new_vals.append(all_values)
             
@@ -268,7 +260,6 @@ class AdaptivePiecewiseLinear(nn.Module):
                 #    return False
                 
                 # Get nearest left and right points
-                print('point[i]', point[i], positions)
                 left_idx = torch.where(left_mask)[0][-1]
                 right_idx = torch.where(right_mask)[0][0]
                 
@@ -536,10 +527,7 @@ class AdaptivePiecewiseLinear(nn.Module):
                         error = abs(interp_val - vals[k])
                         errors[i, j, k-1] = error
                         indices[i, j, k-1] = k
-            
-            print("Errors:", errors)
-            print("Indices:", indices)
-            
+                        
             return errors, indices
 
     def remove_smoothest_point(self):
@@ -555,8 +543,6 @@ class AdaptivePiecewiseLinear(nn.Module):
         with torch.no_grad():
             # Get removal errors and indices
             errors, indices = self.compute_removal_errors()
-            print(f"Errors: {errors}")
-            print(f"Indices: {indices}")
             
             # If we have no removable points, return False
             if errors.numel() == 0:
@@ -564,11 +550,9 @@ class AdaptivePiecewiseLinear(nn.Module):
             
             # Find the index of the point with minimum error for each input-output pair
             min_error_indices = torch.argmin(errors, dim=-1)  # Shape: (num_inputs, num_outputs)
-            print(f"Min error indices: {min_error_indices}")
             
             # Get the actual indices to remove for each input-output pair
             points_to_remove = torch.gather(indices, -1, min_error_indices.unsqueeze(-1)).squeeze(-1)
-            print(f"Points to remove: {points_to_remove}")
             
             # Create new positions and values tensors with one less point per input-output pair
             new_num_points = self.num_points - 1
@@ -579,7 +563,7 @@ class AdaptivePiecewiseLinear(nn.Module):
             for i in range(self.num_inputs):
                 for j in range(self.num_outputs):
                     idx_to_remove = points_to_remove[i, j].item()  # Convert to Python int
-                    print(f"Removing point {idx_to_remove} for input {i}, output {j}")
+
                     mask = torch.ones(self.num_points, dtype=torch.bool, device=self.positions.device)
                     mask[idx_to_remove] = False
                     
