@@ -65,7 +65,6 @@ def save_progress_plot(model, inputs, outputs, epoch, loss, position, grid_size)
     
     plt.tight_layout()
     plt.savefig(f'examples/dynamic_circle_plots/circle_{epoch:03d}.png')
-    images.append(imageio.imread(f'examples/dynamic_circle_plots/circle_{epoch:03d}.png'))
     plt.close()
 
 def save_piecewise_plots(model, epoch):
@@ -82,12 +81,13 @@ def save_piecewise_plots(model, epoch):
         positions = layer.positions.data
         values = layer.values.data
         
-        # Plot each input-output mapping
-        for in_dim in range(positions.shape[0]):  # For each input dimension
-            for out_dim in range(positions.shape[1]):  # For each output dimension
+        # Plot each input-output mapping (limited to first 10)
+        max_lines = 10
+        for in_dim in range(min(positions.shape[0], max_lines)):  # For each input dimension
+            for out_dim in range(min(positions.shape[1], max_lines)):  # For each output dimension
                 pos = positions[in_dim, out_dim].numpy()
                 val = values[in_dim, out_dim].numpy()
-                ax.plot(pos, val, 'o-')  # Removed label
+                ax.plot(pos, val, 'o-', label=f'in_{in_dim}_out_{out_dim}')
         
         ax.set_title(f'Layer {layer_idx+1} Piecewise Approximations')
         ax.set_xlabel('Position')
@@ -96,9 +96,7 @@ def save_piecewise_plots(model, epoch):
     
     plt.tight_layout(pad=3.0)
     filename = f'examples/dynamic_circle_plots/weights_epoch_{epoch:04d}.png'
-    plt.savefig(filename,
-                dpi=300, bbox_inches='tight')
-    line_plots.append(imageio.imread(filename))
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
     plt.close()
 
 
@@ -122,26 +120,28 @@ xx, yy = torch.meshgrid(x, y, indexing='ij')
 inputs = torch.stack([xx.flatten(), yy.flatten()], dim=1)
 
 # Training parameters
-num_points = 5  # Initial number of points in piecewise function
+num_points = 10  # Initial number of points in piecewise function
+hidden_width=5
 num_epochs = 400  # Total number of epochs
 switch_epoch = 200  # Epoch at which to switch the circle position
 learning_rate = 0.001
 
 # Create model and optimizer
 model = AdaptivePiecewiseMLP(
-    width=[2, num_points,num_points, 1],  # Input dim: 2, Hidden layers: 32, Output dim: 1
+    width=[2, hidden_width,hidden_width, 1],  # Input dim: 2, Hidden layers: 32, Output dim: 1
     num_points=num_points,
     position_range=(-1, 1)
 )
+
+# Create GIF writers
+progress_writer = imageio.get_writer('examples/dynamic_circle_plots/progress.gif', mode='I', duration=0.5)
+weights_writer = imageio.get_writer('examples/dynamic_circle_plots/weights.gif', mode='I', duration=0.5)
 
 def generate_optimizer(parameters, learning_rate):
     return Lion(parameters, lr=learning_rate)
 
 optimizer = generate_optimizer(model.parameters(), learning_rate)
 loss_function = nn.MSELoss()
-# Prepare for creating a GIF and storing losses
-images = []
-line_plots=[]
 losses = []
 epochs = []
 
@@ -155,20 +155,12 @@ for epoch in range(num_epochs):
     else:
         outputs = generate_circle_data(xx.flatten(), yy.flatten(),'upper_right')
         position = 'upper_right'
-    
 
-    #outputs = generate_circle_data(xx.flatten(), yy.flatten(),'lower_left')
     batched_out = outputs.unsqueeze(1)
-
     position = 'lower_left'
 
-    #print('torch.max',torch.max(outputs),torch.min(outputs))
-
     # Forward pass
-    
     predictions = model(inputs)
-    
-    #print(predictions.shape, outputs.unsqueeze(1).shape)
     loss = loss_function(predictions, batched_out)
     optimizer.zero_grad()
     loss.backward()
@@ -178,28 +170,31 @@ for epoch in range(num_epochs):
     losses.append(loss.item())
     epochs.append(epoch)
 
-    
     error = torch.abs(predictions-batched_out)
-    #print('max error', torch.max(error))
     new_value = model.largest_error(error, inputs)
     if new_value is not None:
         success=model.remove_add(new_value)
-        #print('success', success)
         optimizer=generate_optimizer(model.parameters(),learning_rate)
-
 
     # Save progress plot every 10 epochs
     if epoch % 10 == 0:
+        # Save progress plot and add to GIF
+        progress_path = f'examples/dynamic_circle_plots/circle_{epoch:03d}.png'
         save_progress_plot(model, inputs, outputs, epoch, loss.item(), position, grid_size)
+        progress_writer.append_data(imageio.imread(progress_path))
+        
+        # Save weights plot and add to GIF
+        weights_path = f'examples/dynamic_circle_plots/weights_epoch_{epoch:04d}.png'
         save_piecewise_plots(model, epoch)
+        weights_writer.append_data(imageio.imread(weights_path))
+        
         print(f'Epoch {epoch}/{num_epochs}, Loss: {loss.item():.4f}')
 
 # Save convergence plot
 save_convergence_plot(losses, epochs)
 
-# Create GIF
-print("Creating GIF...")
-imageio.mimsave('examples/dynamic_circle_plots/training_animation.gif', images, fps=5)
-imageio.mimsave('examples/dynamic_circle_plots/line_animation.gif', line_plots, fps=5)
+# Close the writers
+progress_writer.close()
+weights_writer.close()
 
-print("Done!")
+print("GIFs created successfully!")
