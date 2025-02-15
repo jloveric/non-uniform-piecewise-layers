@@ -68,6 +68,38 @@ def save_progress_plot(model, inputs, outputs, epoch, loss, position):
     images.append(imageio.imread(f'examples/dynamic_circle_plots/circle_{epoch:03d}.png'))
     plt.close()
 
+def save_piecewise_plots(model, epoch):
+    """Save plots showing the piecewise approximations for each layer"""
+    num_layers = len(model.layers)
+    
+    # Create figure with a subplot for each layer
+    fig, axes = plt.subplots(num_layers, 1, figsize=(12, 5*num_layers))
+    if num_layers == 1:
+        axes = [axes]
+    
+    # For each layer
+    for layer_idx, (layer, ax) in enumerate(zip(model.layers, axes)):
+        positions = layer.positions.data
+        values = layer.values.data
+        
+        # Plot each input-output mapping
+        for in_dim in range(positions.shape[0]):  # For each input dimension
+            for out_dim in range(positions.shape[1]):  # For each output dimension
+                pos = positions[in_dim, out_dim].numpy()
+                val = values[in_dim, out_dim].numpy()
+                ax.plot(pos, val, 'o-')  # Removed label
+        
+        ax.set_title(f'Layer {layer_idx+1} Piecewise Approximations')
+        ax.set_xlabel('Position')
+        ax.set_ylabel('Value')
+        ax.grid(True)
+    
+    plt.tight_layout(pad=3.0)
+    plt.savefig(f'examples/dynamic_circle_plots/weights_epoch_{epoch:04d}.png',
+                dpi=300, bbox_inches='tight')
+    plt.close()
+
+
 def save_convergence_plot(losses, epochs):
     """Save a plot showing the convergence of loss over epochs."""
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -91,7 +123,7 @@ inputs = torch.stack([xx.flatten(), yy.flatten()], dim=1)
 num_points = 20  # Initial number of points in piecewise function
 num_epochs = 400  # Total number of epochs
 switch_epoch = 200  # Epoch at which to switch the circle position
-learning_rate = 0.00001
+learning_rate = 0.001
 
 # Create model and optimizer
 model = AdaptivePiecewiseMLP(
@@ -146,6 +178,7 @@ for epoch in range(num_epochs):
     # Save progress plot every 10 epochs
     if epoch % 10 == 0:
         save_progress_plot(model, inputs, outputs, epoch, loss.item(), position)
+        save_piecewise_plots(model, epoch)
         print(f'Epoch {epoch}/{num_epochs}, Loss: {loss.item():.4f}')
 
 # Save convergence plot
