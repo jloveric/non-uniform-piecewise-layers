@@ -30,7 +30,6 @@ class AdaptivePiecewiseLinear(nn.Module):
         weights = torch.linspace(0, 1, num_points, device=start.device).view(1, 1, num_points)
         values_line = start.unsqueeze(-1) * (1 - weights) + end.unsqueeze(-1) * weights
         self.values = nn.Parameter(values_line)
-        print('self.positions',self.positions)
 
         self.num_inputs = num_inputs
         self.num_outputs = num_outputs
@@ -153,9 +152,6 @@ class AdaptivePiecewiseLinear(nn.Module):
                     existing_mask = sorted_points.unsqueeze(1) == pos.unsqueeze(0)
                     existing_indices = torch.where(existing_mask.any(dim=1))[0]
                     
-                    print(f"Dimension {i}: sorted_points={sorted_points}, pos={pos}, vals={vals}")
-                    print(f"existing_indices={existing_indices}")
-                    
                     # Copy existing values - for duplicates, they'll all get the same value
                     for idx in existing_indices:
                         point_val = vals[existing_mask[idx].nonzero()[0]]
@@ -166,7 +162,6 @@ class AdaptivePiecewiseLinear(nn.Module):
                     new_indices = torch.ones_like(sorted_points, dtype=torch.bool)
                     new_indices[existing_indices] = False
                     new_point_indices = torch.where(new_indices)[0]
-                    print(f"new_point_indices={new_point_indices}")
                     
                     # For each new point, interpolate between nearest neighbors
                     for idx in new_point_indices:

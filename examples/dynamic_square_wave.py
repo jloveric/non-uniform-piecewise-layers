@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import os
 from non_uniform_piecewise_layers import AdaptivePiecewiseMLP
 from lion_pytorch import Lion
+import imageio
 
 # Set random seeds for reproducibility
 torch.manual_seed(42)
@@ -65,15 +66,16 @@ def save_progress_plot(model, x, y, epoch, loss, position):
     ax2.grid(True)
 
     plt.tight_layout()
-    plt.savefig(f'examples/dynamic_square_wave_plots/epoch_{epoch:04d}.png')
+    plt.savefig(f'square_wave_{epoch}.png')
+    images.append(imageio.imread(f'square_wave_{epoch}.png'))
     plt.close()
 
 # Create synthetic data
 x = torch.linspace(-1, 1, 1000).reshape(-1, 1)
 
 # Training parameters
-num_points = 20  # Initial number of points in piecewise function
-num_epochs = 200  # Total number of epochs
+num_points = 10  # Initial number of points in piecewise function
+num_epochs = 400  # Total number of epochs
 switch_epoch = 100  # Epoch at which to switch the square wave position
 learning_rate = 0.01
 
@@ -91,6 +93,9 @@ def generate_optimizer(parameters, learning_rate) :
 
 optimizer = generate_optimizer(model.parameters(), learning_rate)
 
+# Prepare for creating a GIF
+images = []
+
 # Training loop
 for epoch in range(num_epochs):
     # Generate target data based on epoch
@@ -107,7 +112,7 @@ for epoch in range(num_epochs):
     optimizer.step()
     
     # Call remove_add after each epoch
-    error = torch.pow(torch.abs(y_pred-y),0.1)
+    error = torch.abs(y_pred-y)
     new_value = model.largest_error(error, x)
     model.remove_add(new_value)
     optimizer=generate_optimizer(model.parameters(),learning_rate)
@@ -116,3 +121,8 @@ for epoch in range(num_epochs):
     if epoch % 10 == 0:
         save_progress_plot(model, x, y, epoch, loss.item(), position)
         print(f'Epoch {epoch}/{num_epochs}, Loss: {loss.item():.6f}, Position: {position}')
+
+# Save the images as a GIF
+imageio.mimsave('dynamic_square_wave.gif', images, duration=0.1)  # Adjust duration as needed
+
+print("GIF 'dynamic_square_wave.gif' created successfully!")
