@@ -66,8 +66,8 @@ def save_progress_plot(model, x, y, epoch, loss, position):
     ax2.grid(True)
 
     plt.tight_layout()
-    plt.savefig(f'square_wave_{epoch}.png')
-    images.append(imageio.imread(f'square_wave_{epoch}.png'))
+    fig.savefig(f'examples/dynamic_square_wave_plots/square_wave_{epoch}.png')
+    images.append(imageio.imread(f'examples/dynamic_square_wave_plots/square_wave_{epoch}.png'))
     plt.close()
 
 # Create synthetic data
