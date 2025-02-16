@@ -1,0 +1,32 @@
+defaults:
+  - _self_
+
+# Configure Hydra
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: true
+
+data:
+  x_range: [-1, 1]
+  num_points: 1000
+
+model:
+  initial_points: 2  # Initial number of points in piecewise function
+  max_points: 50    # Maximum number of points to add
+  type: "adaptive"  # "adaptive" or "non_uniform"
+
+training:
+  num_epochs: 1000
+  learning_rate: 0.01
+  min_epochs_between_points: 10  # Minimum epochs to wait between adding points
+  max_epochs_between_points: 100000
+  plateau:
+    window: 20  # Window size to check for loss plateau
+    threshold: 0.1  # Relative improvement threshold to detect plateau
+  error_exponent: 0.1  # Exponent for error calculation
+
+visualization:
+  plot_interval: 100  # Save plots every N epochs
+  dpi: 300

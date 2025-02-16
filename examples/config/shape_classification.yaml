@@ -1,0 +1,38 @@
+defaults:
+  - _self_
+
+# Configure Hydra
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: true
+
+data:
+  num_points: 1000
+  range:
+    min: -1
+    max: 1
+  grid_size: 100  # Number of points for visualization grid
+
+model:
+  initial_num_points: 3  # Start with minimal points
+  hidden_width: 8
+  width: [2, 8, 8, 1]  # [input_dim, hidden1, hidden2, output_dim]
+
+training:
+  max_epochs: 100
+  learning_rate: 0.001
+  point_insertion_interval: 10  # Try to insert points every N epochs
+
+visualization:
+  plot_interval: 10  # Save plots every N epochs
+  dpi: 300
+
+shapes:
+  circle:
+    radius: 0.5
+  square:
+    side_length: 1.0
+  triangle:
+    side_length: 1.0

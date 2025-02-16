@@ -1,0 +1,30 @@
+defaults:
+  - _self_
+
+# Configure Hydra
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: true
+
+data:
+  num_points: 1000
+  x_range: [-1, 1]
+  wave:
+    width: 0.2  # width of the square pulse
+    amplitude: 0.75  # height of the square pulse
+
+model:
+  num_points: 10  # Initial number of points in piecewise function
+  width: [1, 1]  # [input_dim, output_dim]
+  position_range: [-1, 1]
+
+training:
+  num_epochs: 400
+  switch_epoch: 200  # Epoch at which to switch the square wave position
+  learning_rate: 0.01
+
+visualization:
+  plot_interval: 10  # Save plots every N epochs
+  gif_duration: 0.1  # Duration for each frame in GIFs

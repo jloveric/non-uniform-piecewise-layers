@@ -1,0 +1,29 @@
+defaults:
+  - _self_
+
+# Configure Hydra
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: true
+
+data:
+  grid_size: 50
+  x_range: [-1, 1]
+  y_range: [-1, 1]
+
+model:
+  num_points: 10
+  hidden_width: 5
+  position_range: [-1, 1]
+  width: [2, 5, 5, 1]  # [input_dim, hidden1, hidden2, output_dim]
+
+training:
+  num_epochs: 400
+  switch_epoch: 200  # Epoch at which to switch the circle position
+  learning_rate: 0.001
+
+visualization:
+  plot_interval: 10  # Save plots every N epochs
+  gif_duration: 0.5  # Duration for each frame in GIFs
