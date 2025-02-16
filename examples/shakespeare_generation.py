@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 # Set project root for data storage
 os.environ["PROJECT_ROOT"] = str(Path(__file__).parent.parent.absolute())
 
+# Set device
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+logger.info(f"Using device: {device}")
+
 class CharLevelMinGRU(nn.Module):
     def __init__(self, n_chars, hidden_size=256, num_layers=2, num_points=10):
         super().__init__()
@@ -46,7 +50,7 @@ class CharLevelMinGRU(nn.Module):
     def generate(self, start_char, max_length=1000, temperature=0.8):
         self.eval()
         with torch.no_grad():
-            current = torch.tensor([[start_char]], dtype=torch.long)
+            current = torch.tensor([[start_char]], dtype=torch.long, device=device)
             output_chars = []
             hidden_states = None  # Will be initialized as list of states in forward pass
             
@@ -76,7 +80,7 @@ class ShakespeareDataset(torch.utils.data.Dataset):
         self.data_size = len(self.text) - seq_length - 1
         
         # Convert text to indices once, using default value for unknown chars
-        self.text_indices = torch.tensor([self.char_to_idx.get(ch, 0) for ch in self.text], dtype=torch.long)
+        self.text_indices = torch.tensor([self.char_to_idx.get(ch, 0) for ch in self.text], dtype=torch.long, device=device)
     
     def __len__(self):
         return self.data_size
@@ -112,6 +116,8 @@ def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=Non
     total_loss = 0
     
     for i, (sequences, targets) in enumerate(tqdm(data_loader, desc="Training")):
+        sequences = sequences.to(device)
+        targets = targets.to(device)
         optimizer.zero_grad()
         output, _ = model(sequences)
         loss = criterion(output.view(-1, output.size(-1)), targets.view(-1))
@@ -162,13 +168,13 @@ def main(cfg: DictConfig):
         hidden_size=cfg.model.hidden_size,
         num_layers=cfg.model.num_layers,
         num_points=cfg.model.num_points
-    )
+    ).to(device)  # Move model to GPU
     print('Finished building model')
     criterion = nn.CrossEntropyLoss()
     optimizer = Lion(model.parameters(), lr=cfg.training.learning_rate)
     
     # Log model architecture
-    sample_input = torch.zeros((1, cfg.data.seq_length), dtype=torch.long)
+    sample_input = torch.zeros((1, cfg.data.seq_length), dtype=torch.long, device=device)
     writer.add_graph(model, (sample_input,))
     
     # Create checkpoint directory inside Hydra's output directory
