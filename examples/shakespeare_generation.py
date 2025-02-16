@@ -28,11 +28,8 @@ class CharLevelMinGRU(nn.Module):
     def forward(self, x, h=None):
         # x shape: (batch, seq_len)
         x = self.embedding(x)  # (batch, seq_len, hidden_size)
-        print("Embedding shape:", x.shape)
         hidden, states = self.rnn(x, h)  # (batch, seq_len, hidden_size)
-        print("Hidden shape:", hidden.shape)
         output = self.fc(hidden)  # (batch, seq_len, n_chars)
-        print("Output shape:", output.shape)
         return output, states
 
     def generate(self, start_char, max_length=1000, temperature=0.8):
@@ -44,12 +41,9 @@ class CharLevelMinGRU(nn.Module):
             
             for _ in range(max_length):
                 # Forward pass
-                print("Input shape:", current.shape)
                 logits, hidden_states = self(current, hidden_states)
-                print("Logits shape:", logits.shape)
                 # Apply temperature
                 probs = (logits[0, -1] / temperature).softmax(dim=-1)
-                print("Probs shape:", probs.shape)
                 # Sample next character
                 next_char = torch.multinomial(probs, 1)
                 output_chars.append(next_char.item())

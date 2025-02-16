@@ -74,9 +74,7 @@ class MinGRULayer(torch.nn.Module):
             - If unbatched: shapes ((T, out_features), (T, state_dim))
             - If batched: shapes ((B, T, out_features), (B, T, state_dim))
         """
-        print("MinGRULayer input shape:", x.shape)
-        if h is not None:
-            print("MinGRULayer hidden shape:", h.shape)
+        
             
         # Handle batched case
         if x.dim() == 3:
@@ -95,12 +93,8 @@ class MinGRULayer(torch.nn.Module):
         else:
             h_bar = torch.relu(self.h_layer(x))
             zt = torch.sigmoid(self.z_layer(x))
-
-        print("h_bar shape:", h_bar.shape)
-        print("zt shape:", zt.shape)
         
         ht = prefix_sum_hidden_states(zt, h_bar, h)
-        print("ht shape:", ht.shape)
         
         # Reshape ht for output layer
         if ht.dim() == 3:
@@ -110,7 +104,6 @@ class MinGRULayer(torch.nn.Module):
         else:
             y = self.out_layer(ht)
             
-        print("MinGRULayer output shape:", y.shape)
         return y, ht
 
 
