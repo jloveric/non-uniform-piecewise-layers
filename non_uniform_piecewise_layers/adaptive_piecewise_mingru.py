@@ -52,7 +52,7 @@ class MinGRULayer(torch.nn.Module):
 
         self.z_layer = AdaptivePiecewiseLinear(num_inputs=input_dim, num_outputs=state_dim, num_points=num_points)
         self.h_layer = AdaptivePiecewiseLinear(num_inputs=input_dim, num_outputs=state_dim,num_points=num_points)
-        self.out_layer = AdaptivePiecewiseLinear(num_inputs=input_dim, num_outputs=out_features, num_points=num_points)
+        self.out_layer = AdaptivePiecewiseLinear(num_inputs=state_dim, num_outputs=out_features, num_points=num_points)
         self.hidden_size = state_dim
     
     def forward(self, x, h):
@@ -74,14 +74,21 @@ class MinGRULayer(torch.nn.Module):
             B, T, _ = x.shape
             # Reshape for linear layers
             x_reshaped = x.reshape(-1, x.size(-1))
-            h_bar = torch.relu(self.h_layer(x_reshaped).reshape(B, T, -1))
+            h_bar = self.h_layer(x_reshaped).reshape(B, T, -1)
             zt = torch.sigmoid(self.z_layer(x_reshaped)).reshape(B, T, -1)
         else:
             h_bar = torch.relu(self.h_layer(x))
             zt = torch.sigmoid(self.z_layer(x))
 
         ht = prefix_sum_hidden_states(zt, h_bar, h)
-        y = self.out_layer(ht)
+        
+        # Reshape ht for output layer
+        if ht.dim() == 3:
+            B, T, _ = ht.shape
+            ht_reshaped = ht.reshape(-1, ht.size(-1))
+            y = self.out_layer(ht_reshaped).reshape(B, T, -1)
+        else:
+            y = self.out_layer(ht)
 
         return y, ht
 
@@ -91,11 +98,11 @@ class MinGRUStack(torch.nn.Module):
         super(MinGRUStack, self).__init__()
         self.layers = torch.nn.ModuleList()
         self.layers.append(
-            MinGRULayer(input_dim=input_dim, state_dim=state_dim, out_features=state_dim)
+            MinGRULayer(input_dim=input_dim, state_dim=state_dim, out_features=state_dim, num_points=num_points)
         )
         for _ in range(layers - 1):
             self.layers.append(
-                MinGRULayer(input_dim=state_dim, state_dim=state_dim, out_features=state_dim)
+                MinGRULayer(input_dim=state_dim, state_dim=state_dim, out_features=state_dim, num_points=num_points)
             )
         self.output_layer = torch.nn.Linear(in_features=state_dim, out_features=out_features, bias=True)
         self.output_layer = AdaptivePiecewiseLinear(num_inputs=state_dim,num_outputs=out_features, num_points=num_points)
@@ -123,14 +130,17 @@ class MinGRUStack(torch.nn.Module):
         hidden_states = []
         current_x = x
         
-        #print('len(h)',len(h))
         # Process through GRU layers
         for i, layer in enumerate(self.layers):
             current_x, new_h = layer(current_x, h[i])
             hidden_states.append(new_h)
         
         # Apply final output layer
-        output = self.output_layer(current_x)
+        if current_x.dim() == 3:
+            B, T, _ = current_x.shape
+            current_x_reshaped = current_x.reshape(-1, current_x.size(-1))
+            output = self.output_layer(current_x_reshaped).reshape(B, T, -1)
+        else:
+            output = self.output_layer(current_x)
         
         return output, hidden_states
-
