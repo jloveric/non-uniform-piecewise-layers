@@ -1,4 +1,5 @@
 import torch
+from non_uniform_piecewise_layers.adaptive_piecewise_linear import AdaptivePiecewiseLinear
 
 def prefix_sum_hidden_states(z, h_bar, h0):
     """
@@ -46,12 +47,12 @@ def prefix_sum_hidden_states(z, h_bar, h0):
 
 
 class MinGRULayer(torch.nn.Module):
-    def __init__(self, input_dim, state_dim, out_features):
+    def __init__(self, input_dim, state_dim, out_features, num_points):
         super(MinGRULayer, self).__init__()
 
-        self.z_layer = torch.nn.Linear(in_features=input_dim, out_features=state_dim, bias=False)
-        self.h_layer = torch.nn.Linear(in_features=input_dim, out_features=state_dim, bias=False)
-        self.out_layer = torch.nn.Linear(in_features=state_dim, out_features=out_features, bias=False)
+        self.z_layer = AdaptivePiecewiseLinear(num_inputs=input_dim, num_outputs=state_dim, num_points=num_points)
+        self.h_layer = AdaptivePiecewiseLinear(num_inputs=input_dim, num_outputs=state_dim,num_points=num_points)
+        self.out_layer = AdaptivePiecewiseLinear(num_inputs=input_dim, num_outputs=out_features, num_points=num_points)
         self.hidden_size = state_dim
     
     def forward(self, x, h):
@@ -86,7 +87,7 @@ class MinGRULayer(torch.nn.Module):
 
 
 class MinGRUStack(torch.nn.Module):
-    def __init__(self, input_dim, state_dim, out_features, layers, batch_size):
+    def __init__(self, input_dim, state_dim, out_features, layers, num_points):
         super(MinGRUStack, self).__init__()
         self.layers = torch.nn.ModuleList()
         self.layers.append(
@@ -97,6 +98,7 @@ class MinGRUStack(torch.nn.Module):
                 MinGRULayer(input_dim=state_dim, state_dim=state_dim, out_features=state_dim)
             )
         self.output_layer = torch.nn.Linear(in_features=state_dim, out_features=out_features, bias=True)
+        self.output_layer = AdaptivePiecewiseLinear(num_inputs=state_dim,num_outputs=out_features, num_points=num_points)
         self.state_dim = state_dim
 
     def forward(self, x, h=None):
