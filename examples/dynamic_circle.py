@@ -7,13 +7,16 @@ import os
 from non_uniform_piecewise_layers import AdaptivePiecewiseMLP
 from lion_pytorch import Lion
 import imageio
+import hydra
+from hydra.core.hydra_config import HydraConfig
+from omegaconf import DictConfig, OmegaConf
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Set random seeds for reproducibility
 torch.manual_seed(42)
 np.random.seed(42)
-
-# Create output directory for plots
-os.makedirs('examples/dynamic_circle_plots', exist_ok=True)
 
 def generate_circle_data(x, y, position='lower_left'):
     """Generate a circle at either the lower left or upper right position."""
@@ -64,7 +67,7 @@ def save_progress_plot(model, inputs, outputs, epoch, loss, position, grid_size)
     ax.set_aspect('equal')  # Make sure circles look circular
     
     plt.tight_layout()
-    plt.savefig(f'examples/dynamic_circle_plots/circle_{epoch:03d}.png')
+    plt.savefig(f'circle_{epoch:03d}.png')
     plt.close()
 
 def save_piecewise_plots(model, epoch):
@@ -95,10 +98,8 @@ def save_piecewise_plots(model, epoch):
         ax.grid(True)
     
     plt.tight_layout(pad=3.0)
-    filename = f'examples/dynamic_circle_plots/weights_epoch_{epoch:04d}.png'
-    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    plt.savefig(f'weights_epoch_{epoch:04d}.png', dpi=300, bbox_inches='tight')
     plt.close()
-
 
 def save_convergence_plot(losses, epochs):
     """Save a plot showing the convergence of loss over epochs."""
@@ -109,91 +110,91 @@ def save_convergence_plot(losses, epochs):
     ax.grid(True)
     ax.set_title('Convergence Plot')
     plt.tight_layout()
-    plt.savefig('examples/dynamic_circle_plots/convergence.png')
+    plt.savefig('convergence.png')
     plt.close()
-
-# Create synthetic data
-grid_size = 50
-x = torch.linspace(-1, 1, grid_size)
-y = torch.linspace(-1, 1, grid_size)
-xx, yy = torch.meshgrid(x, y, indexing='ij')
-inputs = torch.stack([xx.flatten(), yy.flatten()], dim=1)
-
-# Training parameters
-num_points = 10  # Initial number of points in piecewise function
-hidden_width=5
-num_epochs = 400  # Total number of epochs
-switch_epoch = 200  # Epoch at which to switch the circle position
-learning_rate = 0.001
-
-# Create model and optimizer
-model = AdaptivePiecewiseMLP(
-    width=[2, hidden_width,hidden_width, 1],  # Input dim: 2, Hidden layers: 32, Output dim: 1
-    num_points=num_points,
-    position_range=(-1, 1)
-)
-
-# Create GIF writers
-progress_writer = imageio.get_writer('examples/dynamic_circle_plots/progress.gif', mode='I', duration=0.5)
-weights_writer = imageio.get_writer('examples/dynamic_circle_plots/weights.gif', mode='I', duration=0.5)
 
 def generate_optimizer(parameters, learning_rate):
     return Lion(parameters, lr=learning_rate)
 
-optimizer = generate_optimizer(model.parameters(), learning_rate)
-loss_function = nn.MSELoss()
-losses = []
-epochs = []
-
-# Training loop
-for epoch in range(num_epochs):
-    # Generate target data based on current epoch
+@hydra.main(version_base=None, config_path="config", config_name="dynamic_circle")
+def main(cfg: DictConfig):
+    # Log some useful information
+    logger.info(f"Working directory : {os.getcwd()}")
+    logger.info(f"Output directory : {HydraConfig.get().run.dir}")
+    logger.info("\nConfiguration:")
+    logger.info(OmegaConf.to_yaml(cfg))
     
-    if epoch < switch_epoch:
-        outputs = generate_circle_data(xx.flatten(), yy.flatten(),'lower_left')
-        position = 'lower_left'
-    else:
-        outputs = generate_circle_data(xx.flatten(), yy.flatten(),'upper_right')
-        position = 'upper_right'
-
-    batched_out = outputs.unsqueeze(1)
-
-    # Forward pass
-    predictions = model(inputs)
-    loss = loss_function(predictions, batched_out)
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
+    # Create synthetic data
+    x = torch.linspace(cfg.data.x_range[0], cfg.data.x_range[1], cfg.data.grid_size)
+    y = torch.linspace(cfg.data.y_range[0], cfg.data.y_range[1], cfg.data.grid_size)
+    xx, yy = torch.meshgrid(x, y, indexing='ij')
+    inputs = torch.stack([xx.flatten(), yy.flatten()], dim=1)
     
-    # Record loss
-    losses.append(loss.item())
-    epochs.append(epoch)
-
-    error = torch.abs(predictions-batched_out)
-    new_value = model.largest_error(error, inputs)
-    if new_value is not None:
-        success=model.remove_add(new_value)
-        optimizer=generate_optimizer(model.parameters(),learning_rate)
-
-    # Save progress plot every 10 epochs
-    if epoch % 10 == 0:
-        # Save progress plot and add to GIF
-        progress_path = f'examples/dynamic_circle_plots/circle_{epoch:03d}.png'
-        save_progress_plot(model, inputs, outputs, epoch, loss.item(), position, grid_size)
-        progress_writer.append_data(imageio.imread(progress_path))
+    # Create model and optimizer
+    model = AdaptivePiecewiseMLP(
+        width=cfg.model.width,
+        num_points=cfg.model.num_points,
+        position_range=tuple(cfg.model.position_range)
+    )
+    
+    # Create GIF writers
+    progress_writer = imageio.get_writer('progress.gif', mode='I', duration=cfg.visualization.gif_duration)
+    weights_writer = imageio.get_writer('weights.gif', mode='I', duration=cfg.visualization.gif_duration)
+    
+    optimizer = generate_optimizer(model.parameters(), cfg.training.learning_rate)
+    loss_function = nn.MSELoss()
+    losses = []
+    epochs = []
+    
+    # Training loop
+    for epoch in range(cfg.training.num_epochs):
+        # Generate target data based on current epoch
+        if epoch < cfg.training.switch_epoch:
+            outputs = generate_circle_data(xx.flatten(), yy.flatten(), 'lower_left')
+            position = 'lower_left'
+        else:
+            outputs = generate_circle_data(xx.flatten(), yy.flatten(), 'upper_right')
+            position = 'upper_right'
         
-        # Save weights plot and add to GIF
-        weights_path = f'examples/dynamic_circle_plots/weights_epoch_{epoch:04d}.png'
-        save_piecewise_plots(model, epoch)
-        weights_writer.append_data(imageio.imread(weights_path))
+        batched_out = outputs.unsqueeze(1)
         
-        print(f'Epoch {epoch}/{num_epochs}, Loss: {loss.item():.4f}')
+        # Forward pass
+        predictions = model(inputs)
+        loss = loss_function(predictions, batched_out)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        
+        # Record loss
+        losses.append(loss.item())
+        epochs.append(epoch)
+        
+        error = torch.abs(predictions-batched_out)
+        new_value = model.largest_error(error, inputs)
+        if new_value is not None:
+            success = model.remove_add(new_value)
+            optimizer = generate_optimizer(model.parameters(), cfg.training.learning_rate)
+        
+        # Save progress plot at specified intervals
+        if epoch % cfg.visualization.plot_interval == 0:
+            # Save progress plot and add to GIF
+            save_progress_plot(model, inputs, outputs, epoch, loss.item(), position, cfg.data.grid_size)
+            progress_writer.append_data(imageio.imread(f'circle_{epoch:03d}.png'))
+            
+            # Save weights plot and add to GIF
+            save_piecewise_plots(model, epoch)
+            weights_writer.append_data(imageio.imread(f'weights_epoch_{epoch:04d}.png'))
+            
+            logger.info(f'Epoch {epoch}/{cfg.training.num_epochs}, Loss: {loss.item():.4f}')
+    
+    # Save convergence plot
+    save_convergence_plot(losses, epochs)
+    
+    # Close the writers
+    progress_writer.close()
+    weights_writer.close()
+    
+    logger.info("GIFs created successfully!")
 
-# Save convergence plot
-save_convergence_plot(losses, epochs)
-
-# Close the writers
-progress_writer.close()
-weights_writer.close()
-
-print("GIFs created successfully!")
+if __name__ == "__main__":
+    main()
