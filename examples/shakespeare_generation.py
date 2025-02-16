@@ -53,10 +53,13 @@ class CharLevelMinGRU(nn.Module):
             for _ in range(max_length):
                 # Forward pass
                 logits, hidden_states = self(current, hidden_states)
-                # Apply temperature
-                probs = (logits[0, -1] / temperature).softmax(dim=-1)
-                # Sample next character
-                next_char = torch.multinomial(probs, 1)
+                if temperature == 0:
+                    # For temperature 0, just take the argmax
+                    next_char = torch.argmax(logits[0, -1]).unsqueeze(0)
+                else:
+                    # Apply temperature and sample
+                    probs = (logits[0, -1] / temperature).softmax(dim=-1)
+                    next_char = torch.multinomial(probs, 1)
                 output_chars.append(next_char.item())
                 current = next_char.unsqueeze(0)
             
@@ -176,17 +179,23 @@ def main(cfg: DictConfig):
     for epoch in range(cfg.training.num_epochs):
         loss = train_epoch(model, data_loader, criterion, optimizer, writer, epoch)
         
-        # Generate sample text
+        # Generate sample text with different temperatures
         if epoch % cfg.training.sample_every == 0:
             model.eval()
             start_char = dataset.text[0]
-            generated_chars = model.generate(
-                dataset.char_to_idx[start_char],
-                max_length=200,
-                temperature=cfg.generation.temperature
-            )
-            generated_text = ''.join([dataset.idx_to_char[idx] for idx in generated_chars])
-            writer.add_text('Generated Text', generated_text, epoch)
+            start_idx = dataset.char_to_idx[start_char]
+            
+            # Generate with different temperatures
+            temperatures = [0.0, 0.8, 1.5]
+            for temp in temperatures:
+                generated_chars = model.generate(
+                    start_idx,
+                    max_length=200,
+                    temperature=temp
+                )
+                generated_text = ''.join([dataset.idx_to_char[idx] for idx in generated_chars])
+                writer.add_text(f'Generated Text (temp={temp})', generated_text, epoch)
+            
             model.train()
         
         # Save checkpoint if best loss
