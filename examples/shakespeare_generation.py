@@ -7,6 +7,16 @@ import numpy as np
 from non_uniform_piecewise_layers.adaptive_piecewise_mingru import MinGRUStack
 from lion_pytorch import Lion
 from tqdm import tqdm
+import hydra
+from hydra.core.hydra_config import HydraConfig
+from omegaconf import DictConfig, OmegaConf
+import os
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Set project root for data storage
+os.environ["PROJECT_ROOT"] = str(Path(__file__).parent.parent.absolute())
 
 class CharLevelMinGRU(nn.Module):
     def __init__(self, n_chars, hidden_size=256, num_layers=2, num_points=10):
@@ -68,7 +78,7 @@ class ShakespeareDataset(torch.utils.data.Dataset):
         return self.data_size
     
     def __getitem__(self, idx):
-        # Get sequence starting at random position
+        # Get sequence and target
         sequence = self.text_indices[idx:idx + self.seq_length]
         target = self.text_indices[idx + 1:idx + self.seq_length + 1]
         return sequence, target
@@ -77,51 +87,51 @@ class ShakespeareDataset(torch.utils.data.Dataset):
     def vocab_size(self):
         return len(self.chars)
 
-def load_tiny_shakespeare():
+def load_tiny_shakespeare(url, cache_dir):
     """Download and load the Tiny Shakespeare dataset"""
-    url = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
-    shakespeare_path = Path("tiny_shakespeare.txt")
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_dir / "tinyshakespeare.txt"
     
-    if not shakespeare_path.exists():
-        print("Downloading Tiny Shakespeare dataset...")
+    if not cache_file.exists():
+        print(f"Downloading Tiny Shakespeare dataset to {cache_file}...")
         response = requests.get(url)
-        shakespeare_path.write_text(response.text)
+        response.raise_for_status()
+        cache_file.write_text(response.text)
+    else:
+        print(f"Using cached dataset from {cache_file}")
     
-    return shakespeare_path.read_text()
+    return cache_file.read_text()
 
 def train_epoch(model, data_loader, criterion, optimizer):
     model.train()
     total_loss = 0
     
-    for x_batch, y_batch in tqdm(data_loader):
+    for sequences, targets in tqdm(data_loader, desc="Training"):
         optimizer.zero_grad()
-        output, _ = model(x_batch)
-        loss = criterion(output.view(-1, output.size(-1)), y_batch.view(-1))
+        output, _ = model(sequences)
+        loss = criterion(output.view(-1, output.size(-1)), targets.view(-1))
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
     return total_loss / len(data_loader)
 
-def main():
-    # Hyperparameters
-    hidden_size = 32
-    num_layers = 2
-    batch_size = 32
-    seq_length = 100
-    num_epochs = 10
-    learning_rate = 0.001
-    max_length = 200  # Using first 10K characters for quick testing
-    num_points=3
-
+@hydra.main(version_base=None, config_path="config", config_name="shakespeare_generation")
+def main(cfg: DictConfig):
+    logger.info(f"Original working directory: {hydra.utils.get_original_cwd()}")
+    logger.info(f"Current working directory : {os.getcwd()}")
+    logger.info("\nConfiguration:")
+    logger.info(OmegaConf.to_yaml(cfg))
+    
     # Load data
-    text = load_tiny_shakespeare()
+    text = load_tiny_shakespeare(cfg.data.url, cfg.data.cache_dir)
     print(f"Total text length: {len(text)}")
-    dataset = ShakespeareDataset(text, seq_length=seq_length, max_length=max_length)
+    dataset = ShakespeareDataset(text, seq_length=cfg.data.seq_length, max_length=cfg.data.max_length)
     print(f"Using text length: {len(dataset.text)}")
     
     data_loader = torch.utils.data.DataLoader(
         dataset,
-        batch_size=batch_size,
+        batch_size=cfg.training.batch_size,
         shuffle=True,
         num_workers=0
     )
@@ -130,23 +140,27 @@ def main():
     # Initialize model
     model = CharLevelMinGRU(
         n_chars=dataset.vocab_size,
-        hidden_size=hidden_size,
-        num_layers=num_layers,
-        num_points=num_points
+        hidden_size=cfg.model.hidden_size,
+        num_layers=cfg.model.num_layers,
+        num_points=cfg.model.num_points
     )
     print('Finished building model')
     criterion = nn.CrossEntropyLoss()
-    optimizer = Lion(model.parameters(), lr=learning_rate)
+    optimizer = Lion(model.parameters(), lr=cfg.training.learning_rate)
 
     # Training loop
-    for epoch in range(num_epochs):
+    for epoch in range(cfg.training.num_epochs):
         loss = train_epoch(model, data_loader, criterion, optimizer)
         print(f"Epoch {epoch+1}, Loss: {loss:.4f}")
 
         # Generate sample text
         if (epoch + 1) % 1 == 0:
             start_char = dataset.char_to_idx[text[0]]
-            generated = model.generate(start_char, max_length=200)
+            generated = model.generate(
+                start_char, 
+                max_length=cfg.generation.max_length,
+                temperature=cfg.generation.temperature
+            )
             generated_text = ''.join([dataset.idx_to_char[idx] for idx in generated])
             print("\nGenerated text:")
             print(generated_text)
