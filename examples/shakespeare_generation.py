@@ -12,6 +12,7 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 import os
 import logging
+from torch.utils.tensorboard import SummaryWriter
 
 logger = logging.getLogger(__name__)
 
@@ -103,18 +104,27 @@ def load_tiny_shakespeare(url, cache_dir):
     
     return cache_file.read_text()
 
-def train_epoch(model, data_loader, criterion, optimizer):
+def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=None):
     model.train()
     total_loss = 0
     
-    for sequences, targets in tqdm(data_loader, desc="Training"):
+    for i, (sequences, targets) in enumerate(tqdm(data_loader, desc="Training")):
         optimizer.zero_grad()
         output, _ = model(sequences)
         loss = criterion(output.view(-1, output.size(-1)), targets.view(-1))
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
-    return total_loss / len(data_loader)
+        
+        # Log batch loss to tensorboard
+        if writer is not None and epoch is not None:
+            writer.add_scalar('Loss/batch', loss.item(), epoch * len(data_loader) + i)
+            
+    avg_loss = total_loss / len(data_loader)
+    if writer is not None and epoch is not None:
+        writer.add_scalar('Loss/epoch', avg_loss, epoch)
+    
+    return avg_loss
 
 @hydra.main(version_base=None, config_path="config", config_name="shakespeare_generation")
 def main(cfg: DictConfig):
@@ -122,6 +132,12 @@ def main(cfg: DictConfig):
     logger.info(f"Current working directory : {os.getcwd()}")
     logger.info("\nConfiguration:")
     logger.info(OmegaConf.to_yaml(cfg))
+    
+    # Get Hydra's output directory for this run
+    output_dir = HydraConfig.get().runtime.output_dir
+    
+    # Create tensorboard writer in Hydra's output directory
+    writer = SummaryWriter(log_dir=os.path.join(output_dir, "tensorboard"))
     
     # Load data
     text = load_tiny_shakespeare(cfg.data.url, cfg.data.cache_dir)
@@ -147,24 +163,56 @@ def main(cfg: DictConfig):
     print('Finished building model')
     criterion = nn.CrossEntropyLoss()
     optimizer = Lion(model.parameters(), lr=cfg.training.learning_rate)
-
-    # Training loop
+    
+    # Log model architecture
+    sample_input = torch.zeros((1, cfg.data.seq_length), dtype=torch.long)
+    writer.add_graph(model, (sample_input,))
+    
+    # Create checkpoint directory inside Hydra's output directory
+    checkpoint_dir = os.path.join(output_dir, "checkpoints")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    
+    best_loss = float('inf')
     for epoch in range(cfg.training.num_epochs):
-        loss = train_epoch(model, data_loader, criterion, optimizer)
-        print(f"Epoch {epoch+1}, Loss: {loss:.4f}")
-
+        loss = train_epoch(model, data_loader, criterion, optimizer, writer, epoch)
+        
         # Generate sample text
-        if (epoch + 1) % 1 == 0:
-            start_char = dataset.char_to_idx[text[0]]
-            generated = model.generate(
-                start_char, 
-                max_length=cfg.generation.max_length,
+        if epoch % cfg.training.sample_every == 0:
+            model.eval()
+            start_char = dataset.text[0]
+            generated_chars = model.generate(
+                dataset.char_to_idx[start_char],
+                max_length=200,
                 temperature=cfg.generation.temperature
             )
-            generated_text = ''.join([dataset.idx_to_char[idx] for idx in generated])
-            print("\nGenerated text:")
-            print(generated_text)
-            print()
+            generated_text = ''.join([dataset.idx_to_char[idx] for idx in generated_chars])
+            writer.add_text('Generated Text', generated_text, epoch)
+            model.train()
+        
+        # Save checkpoint if best loss
+        if loss < best_loss:
+            best_loss = loss
+            checkpoint_path = os.path.join(checkpoint_dir, f"model_best.pt")
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': loss,
+                'config': OmegaConf.to_container(cfg)
+            }, checkpoint_path)
+        
+        # Save periodic checkpoint
+        if epoch % cfg.training.checkpoint_every == 0:
+            checkpoint_path = os.path.join(checkpoint_dir, f"model_epoch_{epoch}.pt")
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': loss,
+                'config': OmegaConf.to_container(cfg)
+            }, checkpoint_path)
+    
+    writer.close()
 
 if __name__ == "__main__":
     main()

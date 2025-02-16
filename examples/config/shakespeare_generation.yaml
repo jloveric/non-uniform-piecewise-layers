@@ -10,12 +10,14 @@ data:
 model:
   hidden_size: 32
   num_layers: 2
-  num_points: 3
+  num_points: 10
 
 training:
   batch_size: 32
   num_epochs: 10
   learning_rate: 0.001
+  checkpoint_every: 1  # Save checkpoint every N epochs
+  sample_every: 1     # Generate sample text every N epochs
 
 generation:
   max_length: 200
