@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 from non_uniform_piecewise_layers.adaptive_piecewise_mingru import MinGRUStack
 from lion_pytorch import Lion
+from tqdm import tqdm
 
 class CharLevelMinGRU(nn.Module):
     def __init__(self, n_chars, hidden_size=256, num_layers=2, num_points=10):
@@ -91,7 +92,8 @@ def load_tiny_shakespeare():
 def train_epoch(model, data_loader, criterion, optimizer):
     model.train()
     total_loss = 0
-    for x_batch, y_batch in data_loader:
+    
+    for x_batch, y_batch in tqdm(data_loader):
         optimizer.zero_grad()
         output, _ = model(x_batch)
         loss = criterion(output.view(-1, output.size(-1)), y_batch.view(-1))
@@ -104,11 +106,11 @@ def main():
     # Hyperparameters
     hidden_size = 32
     num_layers = 2
-    batch_size = 4
+    batch_size = 32
     seq_length = 100
     num_epochs = 10
     learning_rate = 0.001
-    max_length = 10000  # Using first 10K characters for quick testing
+    max_length = 1000  # Using first 10K characters for quick testing
     num_points=3
 
     # Load data
