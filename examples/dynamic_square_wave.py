@@ -7,25 +7,27 @@ import os
 from non_uniform_piecewise_layers import AdaptivePiecewiseMLP
 from lion_pytorch import Lion
 import imageio
+import hydra
+from hydra.core.hydra_config import HydraConfig
+from omegaconf import DictConfig, OmegaConf
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Set random seeds for reproducibility
 torch.manual_seed(42)
 np.random.seed(42)
 
-# Create output directory for plots
-os.makedirs('examples/dynamic_square_wave_plots', exist_ok=True)
-
-def generate_square_wave(x, position='left'):
+def generate_square_wave(x, position='left', width=0.2, amplitude=0.75):
     """Generate a square wave at either the left or right position."""
     if position == 'left':
         center = -0.5
     else:  # right
         center = 0.5
     
-    width = 0.2  # width of the square pulse
     mask = torch.abs(x - center) < width/2
     y = torch.zeros_like(x)
-    y[mask] = 0.75
+    y[mask] = amplitude
     return y
 
 def save_progress_plot(model, x, y, epoch, loss, position):
@@ -66,64 +68,72 @@ def save_progress_plot(model, x, y, epoch, loss, position):
     ax2.grid(True)
 
     plt.tight_layout()
-    fig.savefig(f'examples/dynamic_square_wave_plots/square_wave_{epoch}.png')
-    images.append(imageio.imread(f'examples/dynamic_square_wave_plots/square_wave_{epoch}.png'))
+    plt.savefig(f'square_wave_{epoch:03d}.png')
     plt.close()
 
-# Create synthetic data
-x = torch.linspace(-1, 1, 1000).reshape(-1, 1)
-
-# Training parameters
-num_points = 10  # Initial number of points in piecewise function
-num_epochs = 400  # Total number of epochs
-switch_epoch = 200  # Epoch at which to switch the square wave position
-learning_rate = 0.01
-
-# Create model and optimizer
-model = AdaptivePiecewiseMLP(
-    width=[1, 1],  # Input dim: 1, Hidden layers: 10, Output dim: 1
-    num_points=num_points,
-    position_range=(-1, 1)
-)
-
-def generate_optimizer(parameters, learning_rate) :
-    #return torch.optim.Adam(parameters,1e-3)
-    #return torch.optim.SGD(parameters, lr=1e-2)
+def generate_optimizer(parameters, learning_rate):
     return Lion(parameters, lr=learning_rate)
 
-optimizer = generate_optimizer(model.parameters(), learning_rate)
-
-# Prepare for creating a GIF
-images = []
-
-# Training loop
-for epoch in range(num_epochs):
-    # Generate target data based on epoch
-    position = 'left' if epoch < switch_epoch else 'right'
-    y = generate_square_wave(x, position)
+@hydra.main(version_base=None, config_path="config", config_name="dynamic_square_wave")
+def main(cfg: DictConfig):
+    # Log some useful information
+    logger.info(f"Working directory : {os.getcwd()}")
+    logger.info(f"Output directory : {HydraConfig.get().run.dir}")
+    logger.info("\nConfiguration:")
+    logger.info(OmegaConf.to_yaml(cfg))
     
-    # Forward pass
-    y_pred = model(x)
-    loss = nn.MSELoss()(y_pred, y)
+    # Create synthetic data
+    x = torch.linspace(cfg.data.x_range[0], cfg.data.x_range[1], cfg.data.num_points).reshape(-1, 1)
     
-    # Backward pass and optimize
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
+    # Create model and optimizer
+    model = AdaptivePiecewiseMLP(
+        width=cfg.model.width,
+        num_points=cfg.model.num_points,
+        position_range=tuple(cfg.model.position_range)
+    )
     
-    # Call remove_add after each epoch
-    error = torch.abs(y_pred-y)
-    new_value = model.largest_error(error, x)
-    print('new_value', new_value)
-    model.remove_add(new_value)
-    optimizer=generate_optimizer(model.parameters(),learning_rate)
+    optimizer = generate_optimizer(model.parameters(), cfg.training.learning_rate)
     
-    # Save progress plot every 10 epochs
-    if epoch % 10 == 0:
-        save_progress_plot(model, x, y, epoch, loss.item(), position)
-        print(f'Epoch {epoch}/{num_epochs}, Loss: {loss.item():.6f}, Position: {position}')
+    # Prepare for creating a GIF
+    images = []
+    
+    # Training loop
+    for epoch in range(cfg.training.num_epochs):
+        # Generate target data based on epoch
+        position = 'left' if epoch < cfg.training.switch_epoch else 'right'
+        y = generate_square_wave(
+            x, 
+            position=position,
+            width=cfg.data.wave.width,
+            amplitude=cfg.data.wave.amplitude
+        )
+        
+        # Forward pass
+        y_pred = model(x)
+        loss = nn.MSELoss()(y_pred, y)
+        
+        # Backward pass and optimize
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        
+        # Call remove_add after each epoch
+        error = torch.abs(y_pred-y)
+        new_value = model.largest_error(error, x)
+        if new_value is not None:
+            logger.debug(f'New value: {new_value}')
+            model.remove_add(new_value)
+            optimizer = generate_optimizer(model.parameters(), cfg.training.learning_rate)
+        
+        # Save progress plot at specified intervals
+        if epoch % cfg.visualization.plot_interval == 0:
+            save_progress_plot(model, x, y, epoch, loss.item(), position)
+            images.append(imageio.imread(f'square_wave_{epoch:03d}.png'))
+            logger.info(f'Epoch {epoch}/{cfg.training.num_epochs}, Loss: {loss.item():.6f}, Position: {position}')
+    
+    # Save the images as a GIF
+    imageio.mimsave('dynamic_square_wave.gif', images, duration=cfg.visualization.gif_duration)
+    logger.info("GIF 'dynamic_square_wave.gif' created successfully!")
 
-# Save the images as a GIF
-imageio.mimsave('dynamic_square_wave.gif', images, duration=0.1)  # Adjust duration as needed
-
-print("GIF 'dynamic_square_wave.gif' created successfully!")
+if __name__ == "__main__":
+    main()
