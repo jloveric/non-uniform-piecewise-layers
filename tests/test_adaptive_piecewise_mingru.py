@@ -53,8 +53,9 @@ def test_mingru_layer():
     
     y, ht = layer(x, h)
     
-    assert y.shape == (T, out_features)
-    assert ht.shape == (T, state_dim)
+    # Both output and hidden states should be 3D (T, state_dim, features)
+    assert y.shape == (T, state_dim, out_features)
+    assert ht.shape == (T, state_dim, state_dim)
     
     # Test batched forward pass
     B = 3
@@ -104,15 +105,20 @@ def test_mingru_numerical_stability():
     layer = MinGRULayer(input_dim, state_dim, out_features, num_points)
     
     # Test with very large inputs
-    x = torch.ones(10, input_dim) * 1e6
+    T = 10
+    x = torch.ones(T, input_dim) * 1e6
     h = torch.zeros(state_dim)
     
     y, ht = layer(x, h)
     assert not torch.isnan(y).any()
     assert not torch.isnan(ht).any()
+    assert y.shape == (T, state_dim, out_features)
+    assert ht.shape == (T, state_dim, state_dim)
     
     # Test with very small inputs
-    x = torch.ones(10, input_dim) * 1e-6
+    x = torch.ones(T, input_dim) * 1e-6
     y, ht = layer(x, h)
     assert not torch.isnan(y).any()
     assert not torch.isnan(ht).any()
+    assert y.shape == (T, state_dim, out_features)
+    assert ht.shape == (T, state_dim, state_dim)
