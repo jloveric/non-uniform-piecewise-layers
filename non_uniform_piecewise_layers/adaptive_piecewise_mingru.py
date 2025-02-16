@@ -14,9 +14,14 @@ def prefix_sum_hidden_states(z, h_bar, h0):
     Returns:
         Tensor: Computed hidden states of shape (B, T, D) or (T, D)
     """
-    if z.dim() == 2:
-        # Unbatched case: add batch dimension temporarily
-        z = z.unsqueeze(0)
+    # Add missing dimensions if needed
+    if z.dim() == 1:
+        z = z.unsqueeze(0).unsqueeze(0)  # Add batch and time dimensions
+        h_bar = h_bar.unsqueeze(0).unsqueeze(0)
+        h0 = h0.unsqueeze(0)
+        unbatched = True
+    elif z.dim() == 2:
+        z = z.unsqueeze(0)  # Add batch dimension
         h_bar = h_bar.unsqueeze(0)
         h0 = h0.unsqueeze(0)
         unbatched = True
@@ -69,6 +74,10 @@ class MinGRULayer(torch.nn.Module):
             - If unbatched: shapes ((T, out_features), (T, state_dim))
             - If batched: shapes ((B, T, out_features), (B, T, state_dim))
         """
+        print("MinGRULayer input shape:", x.shape)
+        if h is not None:
+            print("MinGRULayer hidden shape:", h.shape)
+            
         # Handle batched case
         if x.dim() == 3:
             B, T, _ = x.shape
@@ -76,11 +85,22 @@ class MinGRULayer(torch.nn.Module):
             x_reshaped = x.reshape(-1, x.size(-1))
             h_bar = self.h_layer(x_reshaped).reshape(B, T, -1)
             zt = torch.sigmoid(self.z_layer(x_reshaped)).reshape(B, T, -1)
+        elif x.dim() == 2:
+            # Add feature dimension if not present
+            x = x.unsqueeze(-1)
+            B, T = x.shape[:2]
+            x_reshaped = x.reshape(-1, x.size(-1))
+            h_bar = self.h_layer(x_reshaped).reshape(B, T, -1)
+            zt = torch.sigmoid(self.z_layer(x_reshaped)).reshape(B, T, -1)
         else:
             h_bar = torch.relu(self.h_layer(x))
             zt = torch.sigmoid(self.z_layer(x))
 
+        print("h_bar shape:", h_bar.shape)
+        print("zt shape:", zt.shape)
+        
         ht = prefix_sum_hidden_states(zt, h_bar, h)
+        print("ht shape:", ht.shape)
         
         # Reshape ht for output layer
         if ht.dim() == 3:
@@ -89,7 +109,8 @@ class MinGRULayer(torch.nn.Module):
             y = self.out_layer(ht_reshaped).reshape(B, T, -1)
         else:
             y = self.out_layer(ht)
-
+            
+        print("MinGRULayer output shape:", y.shape)
         return y, ht
 
 
@@ -126,6 +147,12 @@ class MinGRUStack(torch.nn.Module):
                 h = [torch.zeros(B, self.state_dim, device=x.device) for _ in range(len(self.layers))]
             else:
                 h = [torch.zeros(self.state_dim, device=x.device) for _ in range(len(self.layers))]
+        elif isinstance(h, list):
+            # Already a list of hidden states, keep as is
+            pass
+        else:
+            # Convert single tensor to list of hidden states
+            h = [h_i.squeeze(1) if h_i.dim() == 3 else h_i for h_i in h]
         
         hidden_states = []
         current_x = x
@@ -133,6 +160,9 @@ class MinGRUStack(torch.nn.Module):
         # Process through GRU layers
         for i, layer in enumerate(self.layers):
             current_x, new_h = layer(current_x, h[i])
+            # Ensure new_h has correct shape [B, hidden] not [B, 1, hidden]
+            if new_h.dim() == 3:
+                new_h = new_h.squeeze(1)
             hidden_states.append(new_h)
         
         # Apply final output layer

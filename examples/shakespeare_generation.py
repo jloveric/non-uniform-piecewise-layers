@@ -28,8 +28,11 @@ class CharLevelMinGRU(nn.Module):
     def forward(self, x, h=None):
         # x shape: (batch, seq_len)
         x = self.embedding(x)  # (batch, seq_len, hidden_size)
+        print("Embedding shape:", x.shape)
         hidden, states = self.rnn(x, h)  # (batch, seq_len, hidden_size)
+        print("Hidden shape:", hidden.shape)
         output = self.fc(hidden)  # (batch, seq_len, n_chars)
+        print("Output shape:", output.shape)
         return output, states
 
     def generate(self, start_char, max_length=1000, temperature=0.8):
@@ -37,19 +40,22 @@ class CharLevelMinGRU(nn.Module):
         with torch.no_grad():
             current = torch.tensor([[start_char]], dtype=torch.long)
             output_chars = []
-            h = None
+            hidden_states = None  # Will be initialized as list of states in forward pass
             
             for _ in range(max_length):
                 # Forward pass
-                logits, h = self(current, h)
+                print("Input shape:", current.shape)
+                logits, hidden_states = self(current, hidden_states)
+                print("Logits shape:", logits.shape)
                 # Apply temperature
                 probs = (logits[0, -1] / temperature).softmax(dim=-1)
+                print("Probs shape:", probs.shape)
                 # Sample next character
                 next_char = torch.multinomial(probs, 1)
                 output_chars.append(next_char.item())
                 current = next_char.unsqueeze(0)
-                
-        return output_chars
+            
+            return output_chars
 
 class ShakespeareDataset(torch.utils.data.Dataset):
     def __init__(self, text, seq_length=100, max_length=None):
@@ -110,7 +116,7 @@ def main():
     seq_length = 100
     num_epochs = 10
     learning_rate = 0.001
-    max_length = 1000  # Using first 10K characters for quick testing
+    max_length = 200  # Using first 10K characters for quick testing
     num_points=3
 
     # Load data
