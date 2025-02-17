@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 torch.manual_seed(42)
 np.random.seed(42)
 
+# Set device
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+logger.info(f"Using device: {device}")
+
 def generate_circle_data(x, y, position='lower_left'):
     """Generate a circle at either the lower left or upper right position."""
     if position == 'lower_left':
@@ -30,19 +34,19 @@ def generate_circle_data(x, y, position='lower_left'):
     
     # Points inside circle (radius=0.3) get 0.5, outside get -0.5
     outputs = torch.where(distances <= 0.3, 0.5, -0.5)
-    return outputs
+    return outputs.to(device)
 
 def save_progress_plot(model, inputs, outputs, epoch, loss, position, grid_size):
     """Save a plot showing the current state of the approximation."""
     fig, ax = plt.subplots(figsize=(10, 10))
     
     # Convert inputs to numpy for plotting
-    x_np = inputs[:, 0].reshape(grid_size, grid_size).numpy()
-    y_np = inputs[:, 1].reshape(grid_size, grid_size).numpy()
+    x_np = inputs[:, 0].reshape(grid_size, grid_size).cpu().numpy()
+    y_np = inputs[:, 1].reshape(grid_size, grid_size).cpu().numpy()
     
     # Get model predictions
     with torch.no_grad():
-        predictions = model(inputs).reshape(grid_size, grid_size).numpy()
+        predictions = model(inputs).reshape(grid_size, grid_size).cpu().numpy()
     
     # Plot the predictions using contour with fixed levels
     levels = np.linspace(-0.75, 0.75, 21)  # 21 fixed levels between -0.75 and 0.75
@@ -81,8 +85,8 @@ def save_piecewise_plots(model, epoch):
     
     # For each layer
     for layer_idx, (layer, ax) in enumerate(zip(model.layers, axes)):
-        positions = layer.positions.data
-        values = layer.values.data
+        positions = layer.positions.data.cpu()
+        values = layer.values.data.cpu()
         
         # Plot each input-output mapping (limited to first 10)
         max_lines = 10
@@ -128,14 +132,14 @@ def main(cfg: DictConfig):
     x = torch.linspace(cfg.data.x_range[0], cfg.data.x_range[1], cfg.data.grid_size)
     y = torch.linspace(cfg.data.y_range[0], cfg.data.y_range[1], cfg.data.grid_size)
     xx, yy = torch.meshgrid(x, y, indexing='ij')
-    inputs = torch.stack([xx.flatten(), yy.flatten()], dim=1)
+    inputs = torch.stack([xx.flatten(), yy.flatten()], dim=1).to(device)
     
     # Create model and optimizer
     model = AdaptivePiecewiseMLP(
         width=cfg.model.width,
         num_points=cfg.model.num_points,
         position_range=tuple(cfg.model.position_range)
-    )
+    ).to(device)
     
     # Create GIF writers
     progress_writer = imageio.get_writer('progress.gif', mode='I', duration=cfg.visualization.gif_duration)
