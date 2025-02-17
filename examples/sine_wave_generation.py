@@ -59,6 +59,7 @@ class TimeSeriesMinGRU(nn.Module):
                 output, hidden_states = self(current, hidden_states)
                 next_value = output[:, -1:, :]  # Shape: [batch=1, time=1, feature=1]
                 predictions.append(next_value.squeeze().item())
+
                 # Update current with the predicted value
                 current = next_value
             

@@ -78,35 +78,17 @@ class MinGRULayer(torch.nn.Module):
             - If batched: shapes ((B, T, out_features), (B, T, state_dim))
         """
         
-            
-        # Handle batched case
-        if x.dim() == 3:
-            B, T, _ = x.shape
-            # Reshape for linear layers
-            x_reshaped = x.reshape(-1, x.size(-1))
-            h_bar = self.h_layer(x_reshaped).reshape(B, T, -1)
-            zt = torch.sigmoid(self.z_layer(x_reshaped)).reshape(B, T, -1)
-        elif x.dim() == 2:
-            # Add feature dimension if not present
-            x = x.unsqueeze(-1)
-            B, T = x.shape[:2]
-            x_reshaped = x.reshape(-1, x.size(-1))
-            h_bar = self.h_layer(x_reshaped).reshape(B, T, -1)
-            zt = torch.sigmoid(self.z_layer(x_reshaped)).reshape(B, T, -1)
-        else:
-            h_bar = torch.relu(self.h_layer(x))
-            zt = torch.sigmoid(self.z_layer(x))
-        
+        B, T, _ = x.shape
+        # Reshape for linear layers
+        x_reshaped = x.reshape(-1, x.size(-1))
+        h_bar = torch.tanh(self.h_layer(x_reshaped)).reshape(B, T, -1)
+        zt = torch.sigmoid(self.z_layer(x_reshaped)).reshape(B, T, -1)
         ht = prefix_sum_hidden_states(zt, h_bar, h)
-        
-        # Reshape ht for output layer
-        if ht.dim() == 3:
-            B, T, _ = ht.shape
-            ht_reshaped = ht.reshape(-1, ht.size(-1))
-            y = self.out_layer(ht_reshaped).reshape(B, T, -1)
-        else:
-            y = self.out_layer(ht)
-            
+
+        B, T, _ = ht.shape
+        ht_reshaped = ht.reshape(-1, ht.size(-1))
+        y = self.out_layer(ht_reshaped).reshape(B, T, -1)
+
         return y, ht
 
 
@@ -114,14 +96,31 @@ class MinGRUStack(torch.nn.Module):
     def __init__(self, input_dim, state_dim, out_features, layers, num_points):
         super(MinGRUStack, self).__init__()
         self.layers = torch.nn.ModuleList()
-        self.layers.append(
-            MinGRULayer(input_dim=input_dim, state_dim=state_dim, out_features=state_dim, num_points=num_points)
-        )
-        for _ in range(layers - 1):
+
+        if layers == 1:
             self.layers.append(
-                MinGRULayer(input_dim=state_dim, state_dim=state_dim, out_features=state_dim, num_points=num_points)
+            MinGRULayer(input_dim=input_dim, state_dim=state_dim, out_features=out_features, num_points=num_points)
+        )
+        elif layers == 2:
+            self.layers.append(
+                MinGRULayer(input_dim=input_dim, state_dim=state_dim, out_features=state_dim, num_points=num_points)
             )
-        self.output_layer = AdaptivePiecewiseLinear(num_inputs=state_dim,num_outputs=out_features, num_points=num_points)
+            self.layers.append(
+                MinGRULayer(input_dim=input_dim, state_dim=state_dim, out_features=out_features, num_points=num_points)
+            )
+        else :
+            self.layers.append(
+                MinGRULayer(input_dim=input_dim, state_dim=state_dim, out_features=state_dim, num_points=num_points)
+            )
+            for _ in range(layers - 2):
+                self.layers.append(
+                    MinGRULayer(input_dim=state_dim, state_dim=state_dim, out_features=state_dim, num_points=num_points)
+                )
+            self.layers.append(
+                MinGRULayer(input_dim=input_dim, state_dim=state_dim, out_features=out_features, num_points=num_points)
+            )
+
+        #self.output_layer = AdaptivePiecewiseLinear(num_inputs=state_dim,num_outputs=out_features, num_points=num_points)
         self.state_dim = state_dim
 
     def forward(self, x, h=None):
@@ -161,11 +160,13 @@ class MinGRUStack(torch.nn.Module):
             hidden_states.append(new_h)
         
         # Apply final output layer
+        """
         if current_x.dim() == 3:
             B, T, _ = current_x.shape
             current_x_reshaped = current_x.reshape(-1, current_x.size(-1))
             output = self.output_layer(current_x_reshaped).reshape(B, T, -1)
         else:
             output = self.output_layer(current_x)
-        
+        """
+        output=current_x
         return output, hidden_states
