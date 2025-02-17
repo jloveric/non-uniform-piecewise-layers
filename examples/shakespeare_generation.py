@@ -33,19 +33,19 @@ class CharLevelMinGRU(nn.Module):
         self.rnn = MinGRUStack(
             input_dim=hidden_size,
             state_dim=hidden_size,
-            out_features=hidden_size,
+            out_features=n_chars,
             layers=num_layers,
             num_points=num_points
         )
         # Output layer
-        self.fc = nn.Linear(hidden_size, n_chars)
+        #self.fc = nn.Linear(hidden_size, n_chars)
     
     def forward(self, x, h=None):
         # x shape: (batch, seq_len)
         x = self.embedding(x)  # (batch, seq_len, hidden_size)
         hidden, states = self.rnn(x, h)  # (batch, seq_len, hidden_size)
-        output = self.fc(hidden)  # (batch, seq_len, n_chars)
-        return output, states
+        #output = self.fc(hidden)  # (batch, seq_len, n_chars)
+        return hidden, states #output, states
 
     def generate(self, start_char, max_length=1000, temperature=0.8):
         self.eval()
@@ -192,7 +192,7 @@ def main(cfg: DictConfig):
             start_idx = dataset.char_to_idx[start_char]
             
             # Generate with different temperatures
-            temperatures = [0.0, 0.8, 1.5]
+            temperatures = [0.0, 0.5, 1.0]
             for temp in temperatures:
                 generated_chars = model.generate(
                     start_idx,

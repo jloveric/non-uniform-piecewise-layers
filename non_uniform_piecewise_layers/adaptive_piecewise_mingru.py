@@ -1,5 +1,8 @@
 import torch
 from non_uniform_piecewise_layers.adaptive_piecewise_linear import AdaptivePiecewiseLinear
+from non_uniform_piecewise_layers.utils import norm_type
+from typing import Optional
+
 
 def prefix_sum_hidden_states(z, h_bar, h0):
     """
@@ -118,7 +121,6 @@ class MinGRUStack(torch.nn.Module):
             self.layers.append(
                 MinGRULayer(input_dim=state_dim, state_dim=state_dim, out_features=state_dim, num_points=num_points)
             )
-        self.output_layer = torch.nn.Linear(in_features=state_dim, out_features=out_features, bias=True)
         self.output_layer = AdaptivePiecewiseLinear(num_inputs=state_dim,num_outputs=out_features, num_points=num_points)
         self.state_dim = state_dim
 
