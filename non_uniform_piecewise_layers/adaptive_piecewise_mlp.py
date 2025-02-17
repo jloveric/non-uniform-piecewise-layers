@@ -75,28 +75,8 @@ class AdaptivePiecewiseMLP(nn.Module):
             
             # Get corresponding x values
             candidate_x = x[batch_indices]
+            return candidate_x
             
-            # Check each candidate until we find one that's far enough from existing points
-            min_distance = 1e-6
-            for i in range(len(candidate_x)):
-                x_val = candidate_x[i:i+1]  # Keep batch dimension
-                
-                # Check distance to all existing points in the first layer
-                # We only need to check the first layer since that's where the input goes
-                too_close = False
-                for j in range(x.size(1)):  # Check each input dimension
-                    positions = self.layers[0].positions[j, 0]  # Use first output dimension as reference
-                    distances = torch.abs(positions - x_val[0, j])
-                    if torch.any(distances < min_distance):
-                        too_close = True
-                        break
-                
-                if not too_close:
-                    return x_val
-            
-            # If we get here, no valid point was found
-            return None
-    
     def insert_points(self, x):
         """
         Insert points into all layers, using the output of each layer as input to the next.

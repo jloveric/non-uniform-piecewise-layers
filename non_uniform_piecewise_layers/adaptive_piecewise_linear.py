@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from non_uniform_piecewise_layers.utils import make_antiperiodic
+from non_uniform_piecewise_layers.utils import make_antiperiodic, max_abs
 
 
 class AdaptivePiecewiseLinear(nn.Module):
@@ -281,7 +281,7 @@ class AdaptivePiecewiseLinear(nn.Module):
 
                 # Find points to the left and right of the target point
                 left_mask = positions <= point[i]
-                right_mask = positions > point[i]
+                right_mask = positions >= point[i]
 
                 # if not left_mask.any() or not right_mask.any():
                 # If point is outside range, we can't insert a midpoint
@@ -500,26 +500,8 @@ class AdaptivePiecewiseLinear(nn.Module):
             # Get corresponding x values
             candidate_x = x[batch_indices]
 
-            # Check each candidate until we find one that's far enough from existing points
-            for i in range(len(candidate_x)):
-                x_val = candidate_x[i : i + 1]  # Keep batch dimension
+            return candidate_x
 
-                # Check distance to all existing points
-                too_close = False
-                for j in range(self.num_inputs):
-                    positions = self.positions[
-                        j, 0
-                    ]  # Use first output dimension as reference
-                    distances = torch.abs(positions - x_val[0, j])
-                    if torch.any(distances < min_distance):
-                        too_close = True
-                        break
-
-                if not too_close:
-                    return x_val
-
-            # If we get here, no valid point was found
-            return None
 
     def compute_removal_errors(self):
         """

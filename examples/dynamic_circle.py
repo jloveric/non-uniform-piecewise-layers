@@ -174,6 +174,7 @@ def main(cfg: DictConfig):
         epochs.append(epoch)
         
         error = torch.abs(predictions-batched_out)
+
         new_value = model.largest_error(error, inputs)
         if new_value is not None:
             success = model.remove_add(new_value)
