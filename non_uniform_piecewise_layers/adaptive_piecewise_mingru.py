@@ -18,6 +18,7 @@ def prefix_sum_hidden_states(z, h_bar, h0):
         Tensor: Computed hidden states of shape (B, T, D) or (T, D)
     """
     # Add missing dimensions if needed
+    """
     if z.dim() == 1:
         z = z.unsqueeze(0).unsqueeze(0)  # Add batch and time dimensions
         h_bar = h_bar.unsqueeze(0).unsqueeze(0)
@@ -30,6 +31,8 @@ def prefix_sum_hidden_states(z, h_bar, h0):
         unbatched = True
     else:
         unbatched = False
+    """
+    unbatched = False
 
     B, T, D = z.shape
     
@@ -40,7 +43,6 @@ def prefix_sum_hidden_states(z, h_bar, h0):
     # First compute what the state would be if z=0 everywhere
     # This is just cumsum of h_bar plus h0
     h_cumsum = torch.cumsum(h_bar, dim=1) + h0.unsqueeze(1)
-    
     # Now compute what the state would be if z=1 everywhere
     # This is just h_bar
     h_reset = h_bar
@@ -60,7 +62,7 @@ class MinGRULayer(torch.nn.Module):
 
         self.z_layer = AdaptivePiecewiseLinear(num_inputs=input_dim, num_outputs=state_dim, num_points=num_points)
         self.h_layer = AdaptivePiecewiseLinear(num_inputs=input_dim, num_outputs=state_dim,num_points=num_points)
-        self.out_layer = AdaptivePiecewiseLinear(num_inputs=state_dim, num_outputs=out_features, num_points=num_points)
+        #self.out_layer = AdaptivePiecewiseLinear(num_inputs=state_dim, num_outputs=out_features, num_points=num_points)
         self.hidden_size = state_dim
     
     def forward(self, x, h):
@@ -77,7 +79,6 @@ class MinGRULayer(torch.nn.Module):
             - If unbatched: shapes ((T, out_features), (T, state_dim))
             - If batched: shapes ((B, T, out_features), (B, T, state_dim))
         """
-        
         B, T, _ = x.shape
         # Reshape for linear layers
         x_reshaped = x.reshape(-1, x.size(-1))
@@ -86,10 +87,33 @@ class MinGRULayer(torch.nn.Module):
         ht = prefix_sum_hidden_states(zt, h_bar, h)
 
         B, T, _ = ht.shape
-        ht_reshaped = ht.reshape(-1, ht.size(-1))
-        y = self.out_layer(ht_reshaped).reshape(B, T, -1)
+        #ht_reshaped = ht.reshape(-1, ht.size(-1))
+        #y = self.out_layer(ht_reshaped).reshape(B, T, -1)
 
-        return y, ht
+        return ht
+
+    def remove_add(self, x):
+        """
+        TODO: claude's implementation is obviously wrong fix!
+        Remove the smoothest point and add a new point at the specified location
+        for each adaptive piecewise linear layer.
+
+        Args:
+            x (torch.Tensor): Reference point with shape (batch_size, input_width)
+                specifying where to add the new point.
+
+        Returns:
+            bool: True if points were successfully removed and added in all layers,
+                False otherwise.
+        """
+        with torch.no_grad():
+            # Try removing and adding points in each layer
+            success = True
+            success &= self.z_layer.remove_add(x)
+            success &= self.h_layer.remove_add(x)
+            success &= self.out_layer.remove_add(x)
+        
+        return success
 
 
 class MinGRUStack(torch.nn.Module):
@@ -97,30 +121,16 @@ class MinGRUStack(torch.nn.Module):
         super(MinGRUStack, self).__init__()
         self.layers = torch.nn.ModuleList()
 
-        if layers == 1:
-            self.layers.append(
-            MinGRULayer(input_dim=input_dim, state_dim=state_dim, out_features=out_features, num_points=num_points)
+        self.layers.append(
+            MinGRULayer(input_dim=input_dim, state_dim=state_dim, out_features=state_dim, num_points=num_points)
         )
-        elif layers == 2:
+        for _ in range(layers - 1):
             self.layers.append(
-                MinGRULayer(input_dim=input_dim, state_dim=state_dim, out_features=state_dim, num_points=num_points)
+                MinGRULayer(input_dim=state_dim, state_dim=state_dim, out_features=state_dim, num_points=num_points)
             )
-            self.layers.append(
-                MinGRULayer(input_dim=input_dim, state_dim=state_dim, out_features=out_features, num_points=num_points)
-            )
-        else :
-            self.layers.append(
-                MinGRULayer(input_dim=input_dim, state_dim=state_dim, out_features=state_dim, num_points=num_points)
-            )
-            for _ in range(layers - 2):
-                self.layers.append(
-                    MinGRULayer(input_dim=state_dim, state_dim=state_dim, out_features=state_dim, num_points=num_points)
-                )
-            self.layers.append(
-                MinGRULayer(input_dim=input_dim, state_dim=state_dim, out_features=out_features, num_points=num_points)
-            )
+            
 
-        #self.output_layer = AdaptivePiecewiseLinear(num_inputs=state_dim,num_outputs=out_features, num_points=num_points)
+        self.output_layer = AdaptivePiecewiseLinear(num_inputs=state_dim,num_outputs=out_features, num_points=num_points)
         self.state_dim = state_dim
 
     def forward(self, x, h=None):
@@ -136,11 +146,16 @@ class MinGRUStack(torch.nn.Module):
             hidden_states: List of final hidden states from each GRU layer
         """
         if h is None:
+            B = x.size(0)
+            h = [torch.zeros(B, self.state_dim, device=x.device) for _ in range(len(self.layers))]
+            
+            """
             if x.dim() == 3:
                 B = x.size(0)
                 h = [torch.zeros(B, self.state_dim, device=x.device) for _ in range(len(self.layers))]
             else:
                 h = [torch.zeros(self.state_dim, device=x.device) for _ in range(len(self.layers))]
+            """
         elif isinstance(h, list):
             # Already a list of hidden states, keep as is
             pass
@@ -153,12 +168,12 @@ class MinGRUStack(torch.nn.Module):
         
         # Process through GRU layers
         for i, layer in enumerate(self.layers):
-            current_x, new_h = layer(current_x, h[i])
-            # Ensure new_h has correct shape [B, hidden] not [B, 1, hidden]
-            if new_h.dim() == 3:
-                new_h = new_h.squeeze(1)
-            hidden_states.append(new_h)
-        
+            new_h = layer(current_x, h[i])
+
+            # Store only the last element
+            hidden_states.append(new_h.squeeze(1))
+            current_x = new_h
+
         # Apply final output layer
         """
         if current_x.dim() == 3:
@@ -168,5 +183,40 @@ class MinGRUStack(torch.nn.Module):
         else:
             output = self.output_layer(current_x)
         """
-        output=current_x
+        B, T, _ = current_x.shape
+        current_x_reshaped = current_x.reshape(-1, current_x.size(-1))
+        output = self.output_layer(current_x_reshaped).reshape(B, T, -1)
+
         return output, hidden_states
+
+    def remove_add(self, x):
+        """
+        TODO: Don't think claude's implementation is quite right, fix!
+        Remove the smoothest point and add a new point at the specified location
+        for each layer in the MinGRU stack.
+
+        Args:
+            x (torch.Tensor): Reference point with shape (batch_size, input_width)
+                specifying where to add the new point.
+
+        Returns:
+            bool: True if points were successfully removed and added in all layers,
+                False otherwise.
+        """
+        with torch.no_grad():
+            # Forward pass to get intermediate values
+            intermediate_x = [x]
+            current_x = x
+            h = None  # Start with zero hidden states
+            for layer in self.layers:
+                current_x, _ = layer(current_x, h)
+                intermediate_x.append(current_x)
+            
+            # Try removing and adding points in each layer
+            success = True
+            for i, layer in enumerate(self.layers):
+                success_ = layer.remove_add(intermediate_x[i])
+                if not success_:
+                    success = False
+        
+        return success

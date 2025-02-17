@@ -56,6 +56,7 @@ class TimeSeriesMinGRU(nn.Module):
             
             for _ in range(prediction_length):
                 # Forward pass with just the current value
+                #print('current.shape', current.shape, 'hidden_states.shape', hidden_states[0].shape)
                 output, hidden_states = self(current, hidden_states)
                 next_value = output[:, -1:, :]  # Shape: [batch=1, time=1, feature=1]
                 predictions.append(next_value.squeeze().item())
@@ -207,8 +208,9 @@ def main(cfg: DictConfig):
                 
                 # Get last value from initial sequence for starting generation
                 current = sequence[:, -1:, :]
-                hidden_states = [h[:,-1,:] for h in hidden_states]   
-                print('hidden_states', len(hidden_states), hidden_states[0].shape)  
+                hidden_states = [h[:,-1,:] for h in hidden_states] 
+                #print('current.shape', current.shape)  
+                #print('hidden_states', len(hidden_states), hidden_states[0].shape)  
                 # Generate predictions using the computed hidden states
                 predictions = model.generate(current, prediction_length=200, hidden_states=hidden_states)
                 
