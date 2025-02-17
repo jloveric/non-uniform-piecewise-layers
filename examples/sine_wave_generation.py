@@ -47,11 +47,11 @@ class TimeSeriesMinGRU(nn.Module):
         self.eval()
         with torch.no_grad():
             # If no hidden states provided, initialize with start sequence
-            if hidden_states is None:
-                _, hidden_states = self(start_sequence)
+            #if hidden_states is None:
+            #    _, hidden_states = self(start_sequence)
             
             # Get last value from start sequence
-            current = start_sequence[:, -1:, :]  # Shape: [batch=1, time=1, feature=1]
+            current = start_sequence #start_sequence[:, -1:, :]  # Shape: [batch=1, time=1, feature=1]
             predictions = []
             
             for _ in range(prediction_length):
