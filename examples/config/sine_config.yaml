@@ -1,0 +1,19 @@
+model:
+  input_size: 1
+  hidden_size: 32
+  num_layers: 4
+  num_points: 5
+
+data:
+  seq_length: 100
+  num_samples: 10000
+  frequencies: [1.0, 2.0]  # Multiple frequencies for more complex patterns
+  amplitudes: [1.0, 0.5]   # Corresponding amplitudes
+  sample_rate: 100
+  noise_level: 0.01        # Small amount of noise for robustness
+
+training:
+  batch_size: 32
+  learning_rate: 1e-4
+  num_epochs: 100
+  eval_every: 5            # Evaluate and save predictions every N epochs

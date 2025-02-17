@@ -43,12 +43,13 @@ class TimeSeriesMinGRU(nn.Module):
         output, states = self.rnn(x, h)
         return output, states
 
-    def generate(self, start_sequence, prediction_length=1000):
+    def generate(self, start_sequence, prediction_length=1000, hidden_states=None):
         self.eval()
         with torch.no_grad():
+            # If no hidden states provided, initialize with start sequence
+            if hidden_states is None:
+                _, hidden_states = self(start_sequence)
             
-            hidden_states = None
-
             # Get last value from start sequence
             current = start_sequence[:, -1:, :]  # Shape: [batch=1, time=1, feature=1]
             predictions = []
@@ -138,7 +139,7 @@ def plot_prediction_vs_truth(predictions, ground_truth, save_path=None):
         plt.close(fig)
     return fig
 
-@hydra.main(version_base=None, config_path="../config", config_name="sine_config")
+@hydra.main(version_base=None, config_path="config", config_name="sine_config")
 def main(cfg: DictConfig):
     logger.info(f"Configuration:\n{OmegaConf.to_yaml(cfg)}")
     
@@ -195,29 +196,41 @@ def main(cfg: DictConfig):
         if epoch % cfg.training.eval_every == 0:
             model.eval()
             with torch.no_grad():
-                # Get a sample sequence and ensure correct dimensions
-                sequence, _ = dataset[0]
+                # Get initial sequence and compute hidden states
+                init_sequence_len = 100
+                sequence = dataset.data[0:init_sequence_len].unsqueeze(-1)  # Get first 100 elements and add feature dim
                 sequence = sequence.unsqueeze(0)  # Add batch dimension
                 
-                # Generate predictions
-                predictions = model.generate(sequence, prediction_length=200)
+                # Get hidden states from initial sequence
+                _, hidden_states = model(sequence)
                 
-                # Get corresponding ground truth
-                start_idx = 0  # Starting index in dataset
-                ground_truth = dataset.data[start_idx:start_idx + 200].cpu().numpy()
+                # Get last value from initial sequence for starting generation
+                current = sequence[:, -1:, :]
+                hidden_states = [h[:,-1,:] for h in hidden_states]   
+                print('hidden_states', len(hidden_states), hidden_states[0].shape)  
+                # Generate predictions using the computed hidden states
+                predictions = model.generate(current, prediction_length=200, hidden_states=hidden_states)
+                
+                # Get corresponding ground truth including initial sequence
+                start_idx = 0
+                ground_truth = dataset.data[start_idx:start_idx + init_sequence_len + 200].cpu().numpy()
+                
+                # Combine initial sequence with predictions for plotting
+                initial_sequence = sequence.squeeze().cpu().numpy()
+                full_predictions = np.concatenate([initial_sequence, predictions])
                 
                 # Create and save plot
                 fig = plot_prediction_vs_truth(
-                    predictions, 
+                    full_predictions, 
                     ground_truth,
                     save_path=save_dir / f'prediction_epoch_{epoch}.png'
                 )
                 
                 # Add plot to tensorboard
                 writer.add_figure('Predictions/comparison', fig, epoch)
-                plt.close()
+                plt.close(fig)
                 
-                # Log first prediction value
+                # Log first prediction value after initial sequence
                 writer.add_scalar('Evaluation/prediction_first_value', 
                                 predictions[0], epoch)
     
