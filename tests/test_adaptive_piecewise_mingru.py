@@ -4,7 +4,8 @@ from non_uniform_piecewise_layers.adaptive_piecewise_mingru import (
     prefix_sum_hidden_states,
     MinGRULayer,
     MinGRUStack,
-    solve_recurrence
+    solve_recurrence,
+    #solve_scalar_recurrence
 )
 
 @pytest.fixture
@@ -32,23 +33,21 @@ def test_mingru_layer():
     
     # Test unbatched forward pass
     T = 6
-    x = torch.randn(T, input_dim)
-    h = torch.zeros(state_dim)
+    x = torch.randn(1, T, input_dim)  # Add batch dimension
+    h = torch.zeros(1, state_dim)  # Add batch dimension
     
-    y, ht = layer(x, h)
+    ht = layer(x, h)
     
-    # Both output and hidden states should be 3D (T, state_dim, features)
-    assert y.shape == (T, state_dim, out_features)
-    assert ht.shape == (T, state_dim, state_dim)
+    # Hidden states should be 3D (B, T, state_dim)
+    assert ht.shape == (1, T, state_dim)
     
     # Test batched forward pass
     B = 3
     x_batch = torch.randn(B, T, input_dim)
     h_batch = torch.zeros(B, state_dim)
     
-    y_batch, ht_batch = layer(x_batch, h_batch)
+    ht_batch = layer(x_batch, h_batch)
     
-    assert y_batch.shape == (B, T, out_features)
     assert ht_batch.shape == (B, T, state_dim)
 
 def test_mingru_stack():
@@ -90,22 +89,20 @@ def test_mingru_numerical_stability():
     
     # Test with very large inputs
     T = 10
-    x = torch.ones(T, input_dim) * 1e6
-    h = torch.zeros(state_dim)
+    x = torch.ones(1, T, input_dim) * 1e6  # Add batch dimension
+    h = torch.zeros(1, state_dim)  # Add batch dimension
     
-    y, ht = layer(x, h)
-    assert not torch.isnan(y).any()
+    ht = layer(x, h)
+    
     assert not torch.isnan(ht).any()
-    assert y.shape == (T, state_dim, out_features)
-    assert ht.shape == (T, state_dim, state_dim)
+    assert ht.shape == (1, T, state_dim)
     
     # Test with very small inputs
-    x = torch.ones(T, input_dim) * 1e-6
-    y, ht = layer(x, h)
-    assert not torch.isnan(y).any()
+    x = torch.ones(1, T, input_dim) * 1e-6  # Add batch dimension
+    ht = layer(x, h)
+    
     assert not torch.isnan(ht).any()
-    assert y.shape == (T, state_dim, out_features)
-    assert ht.shape == (T, state_dim, state_dim)
+    assert ht.shape == (1, T, state_dim)
 
 def test_solve_recurrence():
     # Test dimensions
@@ -139,3 +136,26 @@ def test_solve_recurrence():
         print(f"Actual h_t: {h[0, t, 0]}")
         torch.testing.assert_close(h[:, t, :], h_t, rtol=1e-4, atol=1e-4)
         h_prev = h[:, t, :]
+
+def test_solve_recurrence_random():
+    # Test dimensions
+    B, T, V = 2, 4, 3
+    
+    # Create test inputs with random values
+    torch.manual_seed(42)  # For reproducibility
+    a = torch.rand(B, T, V)  # Random coefficients between 0 and 1
+    b = torch.randn(B, T, V)  # Random additive terms from normal distribution
+    h0 = torch.zeros(B, V)  # Initialize with zeros for simpler verification
+    
+    # Get the solution from solve_recurrence
+    h = solve_recurrence(a, b, h0)
+    
+    # Verify shape
+    assert h.shape == (B, T, V)
+    
+    # Verify the recurrence relation at each time step
+    h_prev = h0
+    for t in range(T):
+        h_t = a[:, t, :] * h_prev + b[:, t, :]
+        torch.testing.assert_close(h[:, t, :], h_t, rtol=1e-4, atol=1e-4)
+        h_prev = h[:, t, :]  # Use the actual computed values for next iteration
