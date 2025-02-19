@@ -4,56 +4,92 @@ from non_uniform_piecewise_layers.utils import norm_type
 from typing import Optional
 
 
-def prefix_sum_hidden_states(z, h_bar, h0):
-    """
-    Vectorized computation of hidden states using parallel scan.
-    Implements the recurrence: h[t+1] = (1-z[t])h[t] + z[t]*hbar[t]
+import torch
 
+import torch
+
+import torch
+
+def solve_recurrence(a, b, h0):
+    """
+    TODO: Verify this with small vectors
+    Computes h[t] = a[t] * h[t-1] + b[t] in a vectorized manner using torch.cumprod and torch.cumsum.
+    
     Args:
-        z (Tensor): Update gate tensor of shape (B, T, D) or (T, D)
-        h_bar (Tensor): Candidate hidden states of shape (B, T, D) or (T, D)
-        h0 (Tensor): Initial hidden state of shape (B, D) or (D,)
+        a (torch.Tensor): Multiplicative coefficients of shape (T,)
+        b (torch.Tensor): Additive coefficients of shape (T,)
+        h0 (float or torch.Tensor): Initial condition h[0]
 
     Returns:
-        Tensor: Computed hidden states of shape (B, T, D) or (T, D)
+        torch.Tensor: Computed sequence h of shape (T,)
     """
-    # Add missing dimensions if needed
-    """
-    if z.dim() == 1:
-        z = z.unsqueeze(0).unsqueeze(0)  # Add batch and time dimensions
-        h_bar = h_bar.unsqueeze(0).unsqueeze(0)
-        h0 = h0.unsqueeze(0)
-        unbatched = True
-    elif z.dim() == 2:
-        z = z.unsqueeze(0)  # Add batch dimension
-        h_bar = h_bar.unsqueeze(0)
-        h0 = h0.unsqueeze(0)
-        unbatched = True
-    else:
-        unbatched = False
-    """
-    unbatched = False
+    # Compute cumulative product of a (shifted by one, with 1 prepended)
+    B, T, V = a.shape
+    A = torch.cumprod(a, dim=1)  # A[t] = prod(a[:t+1])
 
-    B, T, D = z.shape
+    #ones_tensor = torch.ones((B, 1, V), device=A.device)
+
+    # Create a scalar tensor with the desired value
+    scalar_value = torch.tensor(1.0, device=A.device)
+
+    # ChatGPT insists this is more efficient than creating the whole tensor
+    # as it creates a view, I'm very dubious. Probably cached anyway.
+    # Expand the scalar to match the required shape [B, 1, V] using broadcasting
+    ones_tensor = scalar_value.expand(B, 1, V)
+
+    # Reverse cumulative product of a (with 1 appended at the end)
+    A_rev = torch.cat([ones_tensor, A[:,:-1,:]],dim=1)  # A_rev[t] = prod(a[t+1:T])
+
     
-    # When z=0, we want h[t] = h[t-1] + h_bar[t]
-    # When z=1, we want h[t] = h_bar[t]
-    # For values in between, we interpolate
-    
-    # First compute what the state would be if z=0 everywhere
-    # This is just cumsum of h_bar plus h0
-    h_cumsum = torch.cumsum(h_bar, dim=1) + h0.unsqueeze(1)
-    # Now compute what the state would be if z=1 everywhere
-    # This is just h_bar
-    h_reset = h_bar
-    
-    # Interpolate between the two based on z
-    h = (1 - z) * h_cumsum + z * h_reset
-    
-    if unbatched:
-        h = h.squeeze(0)
-    
+
+    # Compute the cumulative sum of weighted b
+    B = torch.cumsum(A_rev * b, dim=1)  # Accumulate weighted contributions of b
+
+    # Compute final h[t]
+    h = A * h0.unsqueeze(1) + B
+
     return h
+
+
+def prefix_sum_hidden_states(z, h_bar, h0):
+    a = (1-z)
+    b=z*h_bar
+    ans = solve_recurrence(a,b,h0)
+    return ans
+
+
+
+# def prefix_sum_hidden_states(z, h_bar, h0):
+#     """
+#     Vectorized computation of hidden states using parallel scan.
+#     Implements the recurrence: h[t+1] = (1-z[t])h[t] + z[t]*hbar[t]
+
+#     Args:
+#         z (Tensor): Update gate tensor of shape (B, T, D) or (T, D)
+#         h_bar (Tensor): Candidate hidden states of shape (B, T, D) or (T, D)
+#         h0 (Tensor): Initial hidden state of shape (B, D) or (D,)
+
+#     Returns:
+#         Tensor: Computed hidden states of shape (B, T, D) or (T, D)
+#     """
+
+#     B, T, D = z.shape
+    
+#     # When z=0, we want h[t] = h[t-1] + h_bar[t]
+#     # When z=1, we want h[t] = h_bar[t]
+#     # For values in between, we interpolate
+    
+#     # First compute what the state would be if z=0 everywhere
+#     # This is just cumsum of h_bar plus h0
+#     h_cumsum = torch.cumsum(h_bar, dim=1) + h0.unsqueeze(1)
+#     # Now compute what the state would be if z=1 everywhere
+#     # This is just h_bar
+#     h_reset = h_bar
+    
+#     # Interpolate between the two based on z
+#     h = (1 - z) * h_cumsum + z * h_reset
+    
+#     return h
 
 
 class MinGRULayer(torch.nn.Module):
@@ -82,7 +118,7 @@ class MinGRULayer(torch.nn.Module):
         B, T, _ = x.shape
         # Reshape for linear layers
         x_reshaped = x.reshape(-1, x.size(-1))
-        h_bar = torch.tanh(self.h_layer(x_reshaped)).reshape(B, T, -1)
+        h_bar = self.h_layer(x_reshaped).reshape(B, T, -1)
         zt = torch.sigmoid(self.z_layer(x_reshaped)).reshape(B, T, -1)
         ht = prefix_sum_hidden_states(zt, h_bar, h)
 

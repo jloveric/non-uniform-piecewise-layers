@@ -3,29 +3,13 @@ import torch
 from non_uniform_piecewise_layers.adaptive_piecewise_mingru import (
     prefix_sum_hidden_states,
     MinGRULayer,
-    MinGRUStack
+    MinGRUStack,
+    solve_recurrence
 )
 
 @pytest.fixture
 def device():
     return 'cuda' if torch.cuda.is_available() else 'cpu'
-
-def test_prefix_sum_hidden_states_unbatched():
-    # Test unbatched case
-    T, D = 5, 3
-    z = torch.ones(T, D) * 0.5
-    h_bar = torch.ones(T, D)
-    h0 = torch.zeros(D)
-    
-    h = prefix_sum_hidden_states(z, h_bar, h0)
-    
-    assert h.shape == (T, D)
-    # When z=0.5, output should be mix of cumsum and h_bar
-    expected = torch.ones_like(h)
-    for t in range(T):
-        expected[t] = 0.5 * (torch.ones(D) * (t + 1)) + 0.5 * torch.ones(D)
-    
-    assert torch.allclose(h, expected)
 
 def test_prefix_sum_hidden_states_batched():
     # Test batched case
@@ -122,3 +106,25 @@ def test_mingru_numerical_stability():
     assert not torch.isnan(ht).any()
     assert y.shape == (T, state_dim, out_features)
     assert ht.shape == (T, state_dim, state_dim)
+
+def test_solve_recurrence():
+    # Test dimensions
+    B, T, V = 2, 4, 3
+    
+    # Create test inputs
+    a = torch.rand(B, T, V)  # Random coefficients between 0 and 1
+    b = torch.rand(B, T, V)  # Random additive terms
+    h0 = torch.rand(B, V)    # Random initial conditions
+    
+    # Get the solution from solve_recurrence
+    h = solve_recurrence(a, b, h0)
+    
+    # Verify shape
+    assert h.shape == (B, T, V)
+    
+    # Verify the recurrence relation at each time step
+    h_prev = h0
+    for t in range(T):
+        h_t = a[:, t, :] * h_prev + b[:, t, :]
+        torch.testing.assert_close(h[:, t, :], h_t, rtol=1e-4, atol=1e-4)
+        h_prev = h[:, t, :]
