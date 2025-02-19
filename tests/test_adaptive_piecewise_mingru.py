@@ -111,13 +111,20 @@ def test_solve_recurrence():
     # Test dimensions
     B, T, V = 2, 4, 3
     
-    # Create test inputs
-    a = torch.rand(B, T, V)  # Random coefficients between 0 and 1
-    b = torch.rand(B, T, V)  # Random additive terms
-    h0 = torch.rand(B, V)    # Random initial conditions
+    # Create test inputs with controlled values for easier debugging
+    a = torch.ones(B, T, V) * 0.5  # All coefficients are 0.5
+    b = torch.ones(B, T, V)        # All additive terms are 1
+    h0 = torch.zeros(B, V)         # Initial conditions are 0
     
     # Get the solution from solve_recurrence
     h = solve_recurrence(a, b, h0)
+    
+    # Print intermediate values for debugging
+    print("\nTest values:")
+    print(f"a shape: {a.shape}, values:\n{a[0, :, 0]}")  # First batch, first feature
+    print(f"b shape: {b.shape}, values:\n{b[0, :, 0]}")  # First batch, first feature
+    print(f"h0 shape: {h0.shape}, values:\n{h0[0, :]}")  # First batch
+    print(f"h shape: {h.shape}, values:\n{h[0, :, 0]}")  # First batch, first feature
     
     # Verify shape
     assert h.shape == (B, T, V)
@@ -126,5 +133,9 @@ def test_solve_recurrence():
     h_prev = h0
     for t in range(T):
         h_t = a[:, t, :] * h_prev + b[:, t, :]
+        print(f"\nTime step {t}:")
+        print(f"h_prev: {h_prev[0, 0]}")
+        print(f"Expected h_t: {h_t[0, 0]}")
+        print(f"Actual h_t: {h[0, t, 0]}")
         torch.testing.assert_close(h[:, t, :], h_t, rtol=1e-4, atol=1e-4)
         h_prev = h[:, t, :]

@@ -27,20 +27,10 @@ def solve_recurrence(a, b, h0):
     B, T, V = a.shape
     A = torch.cumprod(a, dim=1)  # A[t] = prod(a[:t+1])
 
-    #ones_tensor = torch.ones((B, 1, V), device=A.device)
-
-    # Create a scalar tensor with the desired value
-    scalar_value = torch.tensor(1.0, device=A.device)
-
-    # ChatGPT insists this is more efficient than creating the whole tensor
-    # as it creates a view, I'm very dubious. Probably cached anyway.
-    # Expand the scalar to match the required shape [B, 1, V] using broadcasting
-    ones_tensor = scalar_value.expand(B, 1, V)
+    ones_tensor = torch.ones((B, 1, V), device=A.device)
 
     # Reverse cumulative product of a (with 1 appended at the end)
     A_rev = torch.cat([ones_tensor, A[:,:-1,:]],dim=1)  # A_rev[t] = prod(a[t+1:T])
-
-    
 
     # Compute the cumulative sum of weighted b
     B = torch.cumsum(A_rev * b, dim=1)  # Accumulate weighted contributions of b
