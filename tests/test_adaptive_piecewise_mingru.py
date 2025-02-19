@@ -145,7 +145,7 @@ def test_solve_recurrence_random():
     torch.manual_seed(42)  # For reproducibility
     a = torch.rand(B, T, V)  # Random coefficients between 0 and 1
     b = torch.randn(B, T, V)  # Random additive terms from normal distribution
-    h0 = torch.zeros(B, V)  # Initialize with zeros for simpler verification
+    h0 = torch.randn(B, V)    # Random initial conditions
     
     # Get the solution from solve_recurrence
     h = solve_recurrence(a, b, h0)

@@ -48,37 +48,6 @@ def solve_recurrence(a, b, h0):
     
     return h
 
-if False:
-    def solve_recurrence(a, b, h0):
-        """
-        TODO: Verify this with small vectors
-        Computes h[t] = a[t] * h[t-1] + b[t] in a vectorized manner using torch.cumprod and torch.cumsum.
-        
-        Args:
-            a (torch.Tensor): Multiplicative coefficients of shape (T,)
-            b (torch.Tensor): Additive coefficients of shape (T,)
-            h0 (float or torch.Tensor): Initial condition h[0]
-
-        Returns:
-            torch.Tensor: Computed sequence h of shape (T,)
-        """
-        # Compute cumulative product of a (shifted by one, with 1 prepended)
-        B, T, V = a.shape
-        A = torch.cumprod(a, dim=1)  # A[t] = prod(a[:t+1])
-
-        ones_tensor = torch.ones((B, 1, V), device=A.device)
-
-        # Reverse cumulative product of a (with 1 appended at the end)
-        A_rev = torch.cat([ones_tensor, A[:,:-1,:]],dim=1)  # A_rev[t] = prod(a[t+1:T])
-
-        # Compute the cumulative sum of weighted b
-        B = torch.cumsum(A_rev * b, dim=1)  # Accumulate weighted contributions of b
-
-        # Compute final h[t]
-        h = A * h0.unsqueeze(1) + B
-
-        return h
-
 
 def prefix_sum_hidden_states(z, h_bar, h0):
     a = (1-z)
