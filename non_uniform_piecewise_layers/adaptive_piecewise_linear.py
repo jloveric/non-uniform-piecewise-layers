@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from non_uniform_piecewise_layers.utils import make_antiperiodic, max_abs
-
+import math
 
 class AdaptivePiecewiseLinear(nn.Module):
     def __init__(
@@ -36,8 +36,13 @@ class AdaptivePiecewiseLinear(nn.Module):
         )
 
         # Initialize each input-output pair with a random line (collinear points)
-        start = torch.empty(num_inputs, num_outputs).uniform_(-0.1, 0.1)
-        end = torch.empty(num_inputs, num_outputs).uniform_(-0.1, 0.1)
+        
+        # The factor 0.5 is from trial and error to get a stable solution with mingru
+        # the rest is just central limit theorem
+        factor = 0.5*math.sqrt(1.0/(3*num_inputs))
+        
+        start = torch.empty(num_inputs, num_outputs).uniform_(-factor, factor)
+        end = torch.empty(num_inputs, num_outputs).uniform_(-factor, factor)
         weights = torch.linspace(0, 1, num_points, device=start.device).view(
             1, 1, num_points
         )

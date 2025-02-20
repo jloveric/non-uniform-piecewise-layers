@@ -22,7 +22,7 @@ def solve_recurrence(a, b, h0):
     # Compute the logarithm of the cumulative product: log_A[t] = log(a[0]) + ... + log(a[t])
     log_a = torch.log(a)
     log_A = torch.cumsum(log_a, dim=1)
-    print('log_A', log_A)
+    
     # Compute the scaled b without division: log_S[k] = -log_A[k]
     log_S = -log_A
 
@@ -30,7 +30,7 @@ def solve_recurrence(a, b, h0):
     exp_log_S = torch.exp(log_S)
     b_scaled = b * exp_log_S
     S = torch.cumsum(b_scaled, dim=1)
-    print('S', S)
+    
     # Final sequence: h[t] = exp(log_A[t]) * (h0 + S[t])
     exp_log_A = torch.exp(log_A)
     h = exp_log_A * (h0.unsqueeze(1) + S)
@@ -75,40 +75,6 @@ def prefix_sum_hidden_states(z, h_bar, h0):
     b=z*h_bar
     ans = solve_recurrence_unstable(a,b,h0)
     return ans
-
-
-
-# def prefix_sum_hidden_states(z, h_bar, h0):
-#     """
-#     Vectorized computation of hidden states using parallel scan.
-#     Implements the recurrence: h[t+1] = (1-z[t])h[t] + z[t]*hbar[t]
-
-#     Args:
-#         z (Tensor): Update gate tensor of shape (B, T, D) or (T, D)
-#         h_bar (Tensor): Candidate hidden states of shape (B, T, D) or (T, D)
-#         h0 (Tensor): Initial hidden state of shape (B, D) or (D,)
-
-#     Returns:
-#         Tensor: Computed hidden states of shape (B, T, D) or (T, D)
-#     """
-
-#     B, T, D = z.shape
-    
-#     # When z=0, we want h[t] = h[t-1] + h_bar[t]
-#     # When z=1, we want h[t] = h_bar[t]
-#     # For values in between, we interpolate
-    
-#     # First compute what the state would be if z=0 everywhere
-#     # This is just cumsum of h_bar plus h0
-#     h_cumsum = torch.cumsum(h_bar, dim=1) + h0.unsqueeze(1)
-#     # Now compute what the state would be if z=1 everywhere
-#     # This is just h_bar
-#     h_reset = h_bar
-    
-#     # Interpolate between the two based on z
-#     h = (1 - z) * h_cumsum + z * h_reset
-    
-#     return h
 
 
 class MinGRULayer(torch.nn.Module):
