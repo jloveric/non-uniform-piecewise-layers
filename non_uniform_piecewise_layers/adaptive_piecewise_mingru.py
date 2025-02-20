@@ -1,7 +1,14 @@
 import torch
 from non_uniform_piecewise_layers.adaptive_piecewise_linear import AdaptivePiecewiseLinear
-from non_uniform_piecewise_layers.utils import norm_type
+from non_uniform_piecewise_layers.utils import norm_type, max_abs
 from typing import Optional
+from torch import Tensor
+
+def max_abs_normalization_mingru(x: Tensor, eps: float = 1e-6):
+    shape = x.shape
+    xn = x.reshape(shape[0]*shape[1], -1)
+    norm = xn / (max_abs(xn) + eps)
+    return norm.reshape(shape)
 
 def solve_recurrence(a, b, h0):
     """
@@ -107,9 +114,7 @@ class MinGRULayer(torch.nn.Module):
         zt = torch.sigmoid(self.z_layer(x_reshaped)).reshape(B, T, -1)
         ht = prefix_sum_hidden_states(zt, h_bar, h)
 
-        B, T, _ = ht.shape
-        #ht_reshaped = ht.reshape(-1, ht.size(-1))
-        #y = self.out_layer(ht_reshaped).reshape(B, T, -1)
+        ht = max_abs_normalization_mingru(ht)
 
         return ht
 
