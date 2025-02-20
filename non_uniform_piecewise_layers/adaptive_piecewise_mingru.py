@@ -3,22 +3,43 @@ from non_uniform_piecewise_layers.adaptive_piecewise_linear import AdaptivePiece
 from non_uniform_piecewise_layers.utils import norm_type
 from typing import Optional
 
-
-import torch
-
-import torch
-
-import torch
-
-import torch
-
-import torch
-
-import torch
-
-import torch
-
 def solve_recurrence(a, b, h0):
+    """
+    Computes h[t] = a[t] * h[t-1] + b[t] for t >= 0 in a vectorized manner.
+
+    The closed-form solution is reformulated using logarithms to avoid division:
+
+        h[t] = exp(log_A[t]) * (h0 + sum_{k=0}^{t} (b[k] * exp(log_S[k])))
+
+    Args:
+        a (torch.Tensor): Multiplicative coefficients of shape (T,)
+        b (torch.Tensor): Additive coefficients of shape (T,)
+        h0 (float or torch.Tensor): Initial condition h0
+
+    Returns:
+        torch.Tensor: Computed sequence h of shape (T,)
+    """
+    # Compute the logarithm of the cumulative product: log_A[t] = log(a[0]) + ... + log(a[t])
+    log_a = torch.log(a)
+    log_A = torch.cumsum(log_a, dim=1)
+    print('log_A', log_A)
+    # Compute the scaled b without division: log_S[k] = -log_A[k]
+    log_S = -log_A
+
+    # Compute the cumulative sum in the log domain: S[t] = sum_{k=0}^{t} (b[k] * exp(log_S[k]))
+    exp_log_S = torch.exp(log_S)
+    b_scaled = b * exp_log_S
+    S = torch.cumsum(b_scaled, dim=1)
+    print('S', S)
+    # Final sequence: h[t] = exp(log_A[t]) * (h0 + S[t])
+    exp_log_A = torch.exp(log_A)
+    h = exp_log_A * (h0.unsqueeze(1) + S)
+
+    return h
+
+
+
+def solve_recurrence_unstable(a, b, h0):
     """
     Computes h[t] = a[t] * h[t-1] + b[t] for t >= 0 in a vectorized manner.
     
@@ -36,10 +57,10 @@ def solve_recurrence(a, b, h0):
     """
     # Forward cumulative product: A[t] = a[0]*...*a[t]
     A = torch.cumprod(a, dim=1)
-    
+    #print('A',A)
     # Scale b by dividing each b[k] by A[k]
     b_scaled = b / A
-    
+    #print('b_scaled', b_scaled)
     # Compute cumulative sum: S[t] = sum_{k=0}^{t} (b[k] / A[k])
     S = torch.cumsum(b_scaled, dim=1)
     
@@ -52,7 +73,7 @@ def solve_recurrence(a, b, h0):
 def prefix_sum_hidden_states(z, h_bar, h0):
     a = (1-z)
     b=z*h_bar
-    ans = solve_recurrence(a,b,h0)
+    ans = solve_recurrence_unstable(a,b,h0)
     return ans
 
 

@@ -177,7 +177,9 @@ def main(cfg: DictConfig):
         num_points=cfg.model.num_points
     ).to(device)
     
+    #optimizer_class = torch.optim.Adam
     # Initialize optimizer and loss
+    #optimizer = torch.optim.Adam(model.parameters(), lr=cfg.training.learning_rate)
     optimizer = Lion(model.parameters(), lr=cfg.training.learning_rate)
     criterion = nn.MSELoss()
     
