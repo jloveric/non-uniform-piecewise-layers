@@ -92,7 +92,7 @@ class SineWaveDataset(torch.utils.data.Dataset):
     
     def __getitem__(self, idx):
         sequence = self.data[idx:idx + self.seq_length].unsqueeze(-1)
-        target = self.data[idx + 1:idx + self.seq_length + 1].unsqueeze(-1)
+        target = self.data[(idx + 1):(idx + self.seq_length + 1)].unsqueeze(-1)
         return sequence, target
 
 def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=None):
@@ -183,6 +183,8 @@ def main(cfg: DictConfig):
     optimizer = Lion(model.parameters(), lr=cfg.training.learning_rate)
     criterion = nn.MSELoss()
     
+    prediction_length=200
+
     # Training loop
     best_loss = float('inf')
     for epoch in range(cfg.training.num_epochs):
@@ -191,6 +193,7 @@ def main(cfg: DictConfig):
         
         logger.info(f"Epoch {epoch}: Average Loss = {avg_loss:.6f}")
         
+
         # Save best model
         if avg_loss < best_loss:
             best_loss = avg_loss
@@ -201,7 +204,7 @@ def main(cfg: DictConfig):
             model.eval()
             with torch.no_grad():
                 # Get initial sequence and compute hidden states
-                init_sequence_len = 100
+                init_sequence_len = 50
                 sequence = dataset.data[0:init_sequence_len].unsqueeze(-1)  # Get first 100 elements and add feature dim
                 sequence = sequence.unsqueeze(0)  # Add batch dimension
                 
@@ -214,11 +217,11 @@ def main(cfg: DictConfig):
                 #print('current.shape', current.shape)  
                 #print('hidden_states', len(hidden_states), hidden_states[0].shape)  
                 # Generate predictions using the computed hidden states
-                predictions = model.generate(current, prediction_length=200, hidden_states=hidden_states)
+                predictions = model.generate(current, prediction_length=prediction_length, hidden_states=hidden_states)
                 
                 # Get corresponding ground truth including initial sequence
                 start_idx = 0
-                ground_truth = dataset.data[start_idx:start_idx + init_sequence_len + 200].cpu().numpy()
+                ground_truth = dataset.data[start_idx:start_idx + init_sequence_len + prediction_length].cpu().numpy()
                 
                 # Combine initial sequence with predictions for plotting
                 initial_sequence = sequence.squeeze().cpu().numpy()

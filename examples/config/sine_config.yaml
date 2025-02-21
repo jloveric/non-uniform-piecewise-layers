@@ -2,7 +2,7 @@ model:
   input_size: 1
   hidden_size: 32
   num_layers: 2
-  num_points: 4
+  num_points: 16
 
 data:
   seq_length: 100
