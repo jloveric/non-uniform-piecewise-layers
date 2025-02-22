@@ -346,12 +346,12 @@ def test_remove_add():
     positions = torch.zeros(num_inputs, num_outputs, num_points)
     values = torch.zeros(num_inputs, num_outputs, num_points)
     
-    # Set positions for all inputs/outputs
-    positions[:, :] = torch.tensor([0.0, 0.33, 0.67, 1.0])
+    # Set positions for all inputs/outputs using [-1, 1] range
+    positions[:, :] = torch.tensor([-1.0, -0.33, 0.33, 1.0])
     
     # Set values to create regions of high and low error
-    # For input 0, output 0: point at x=0.67 should be smoothest (removed)
-    # and gap between x=0.33 and x=0.67 should have highest error (added)
+    # For input 0, output 0: point at x=0.33 should be smoothest (removed)
+    # and gap between x=-0.33 and x=0.33 should have highest error (added)
     values[0, 0] = torch.tensor([0.0, 0.5, 0.8, 1.0])
     
     # For input 0, output 1: similar pattern
@@ -371,8 +371,8 @@ def test_remove_add():
     original_values = values.clone()
     original_num_points = layer.num_points
     
-    # Choose a point to add (midpoint between x=0.33 and x=0.67)
-    point = torch.tensor([0.5, 0.5])  # Same x=0.5 for both inputs
+    # Choose a point to add (midpoint between x=-0.33 and x=0.33)
+    point = torch.tensor([0.0, 0.0])  # Same x=0.0 for both inputs
     
     # Perform remove_add operation
     success = layer.remove_add(point)
@@ -401,6 +401,6 @@ def test_remove_add():
     
     # Test edge case: only 2 points
     layer = AdaptivePiecewiseLinear(num_inputs=1, num_outputs=1, num_points=2)
-    success = layer.remove_add(torch.tensor([0.5]))  # Only 1 input for this layer
+    success = layer.remove_add(torch.tensor([0.0]))  # Only 1 input for this layer
     assert not success, "Should not be able to add/remove points when only 2 points exist"
     assert layer.num_points == 2, "Number of points should not change when operation fails"

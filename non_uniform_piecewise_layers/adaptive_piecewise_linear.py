@@ -138,114 +138,98 @@ class AdaptivePiecewiseLinear(nn.Module):
                 print("Rejecting points outside [-1, 1] range")
                 return False
 
-            # Check if any point is too close to existing points
-            """
-            min_distance = 1e-6
-            for i in range(self.num_inputs):
-                for j in range(self.num_outputs):
-                    pos = self.positions[i, j]
-                    point = points[i]
-                    distances = torch.abs(pos - point)
-                    if torch.any(distances < min_distance):
-                        print(f"Point {point.item():.6f} too close to existing point in dimension {i}")
-                        return False
-            """
+            # Prepare points for broadcasting
+            # Shape: (num_inputs, num_outputs, 1)
+            points = points.view(self.num_inputs, 1, 1).expand(-1, self.num_outputs, -1)
+            
+            # Concatenate new points with existing positions
+            # Shape: (num_inputs, num_outputs, num_points + 1)
+            all_points = torch.cat([self.positions, points], dim=-1)
+            
+            # Sort points for each input-output pair
+            # Shape: (num_inputs, num_outputs, num_points + 1)
+            sorted_points, sort_indices = torch.sort(all_points, dim=-1)
+            
+            # Create tensors to store the interpolated values
+            # Shape: (num_inputs, num_outputs, num_points + 1)
+            all_values = torch.zeros_like(sorted_points)
+            
+            # Find where sorted points match existing positions
+            # Shape: (num_inputs, num_outputs, num_points + 1, num_points)
+            sorted_points_expanded = sorted_points.unsqueeze(-1)
+            positions_expanded = self.positions.unsqueeze(-2)
+            existing_mask = torch.isclose(sorted_points_expanded, positions_expanded)
+            
+            # Get indices of existing and new points
+            # Shape: (num_inputs, num_outputs, num_points + 1)
+            is_existing = existing_mask.any(dim=-1)
+            is_new = ~is_existing
 
-            # Combine current and new positions
-            current_positions = self.positions  # (num_inputs, num_outputs, num_points)
-            current_values = self.values  # (num_inputs, num_outputs, num_points)
+            # Handle existing points (including duplicates)
+            # For each existing point, find its first matching value in the original tensor
+            # Shape: (num_inputs, num_outputs, num_points + 1)
+            first_match_indices = torch.argmax(existing_mask.to(torch.float32), dim=-1)
+            existing_values = torch.gather(self.values, -1, first_match_indices)
+            
+            # For new points, we need to interpolate
+            # Find strictly left and right neighbors
+            # Shape: (num_inputs, num_outputs, num_points + 1, num_points)
+            left_mask = positions_expanded < sorted_points_expanded
+            right_mask = positions_expanded > sorted_points_expanded
+            
+            # For each point, find its rightmost left neighbor and leftmost right neighbor
+            # Shape: (num_inputs, num_outputs, num_points + 1)
+            left_indices = torch.where(left_mask, positions_expanded, float('-inf')).max(dim=-1)
+            right_indices = torch.where(right_mask, positions_expanded, float('inf')).min(dim=-1)
+            
+            # Get the actual indices for gathering values
+            left_pos = left_indices.values
+            right_pos = right_indices.values
+            left_idx = left_indices.indices
+            right_idx = right_indices.indices
+            
+            # Get values at these positions using gather
+            left_values = torch.gather(self.values, -1, left_idx)
+            right_values = torch.gather(self.values, -1, right_idx)
+            
+            # Identify points outside the range (no left or no right neighbor)
+            outside_range = (~left_mask.any(dim=-1)) | (~right_mask.any(dim=-1))
+            
+            # For outside range points, find nearest existing point
+            nearest_dists = torch.abs(sorted_points_expanded - positions_expanded)
+            nearest_indices = nearest_dists.argmin(dim=-1)
+            nearest_values = torch.gather(self.values, -1, nearest_indices)
+            
+            # Compute interpolation for points within range
+            # Avoid division by zero by checking for equal positions
+            pos_diff = right_pos - left_pos
+            is_same_pos = torch.isclose(right_pos, left_pos)
+            # Where positions are the same, t will be 0 (we'll use left value)
+            safe_pos_diff = torch.where(is_same_pos, torch.ones_like(pos_diff), pos_diff)
+            t = (sorted_points - left_pos) / safe_pos_diff
+            
+            # Interpolate values
+            interpolated = left_values + t * (right_values - left_values)
+            # Where positions are the same, use left value
+            interpolated = torch.where(is_same_pos, left_values, interpolated)
+            
+            # Combine all values
+            # First set interpolated values for new points
+            all_values = torch.where(is_new, interpolated, existing_values)
+            # Then override with nearest values for outside range points
+            all_values = torch.where(outside_range & is_new, nearest_values, all_values)
+            
+            # Update the layer's positions and values using .data
+            # It is critical that positions is not a parameter as I do not want
+            # to be able to update the positions other than point insertion and removal.
+            self.positions.data = sorted_points
+            self.values = nn.Parameter(all_values)
+            self.num_points = sorted_points.size(-1)
 
-            # For each new point, we'll interpolate between its two nearest neighbors
-            new_pos = []
-            new_vals = []
+            # Handle boundary conditions
+            self.positions.data[..., 0] = self.position_min
+            self.positions.data[..., -1] = self.position_max
 
-            for i in range(self.num_inputs):
-                for j in range(self.num_outputs):
-                    pos = current_positions[i, j]  # Current positions for this i,j
-                    vals = current_values[i, j]  # Current values for this i,j
-
-                    # Add the new point for this input dimension
-                    all_points = torch.cat([pos, points[i].unsqueeze(0)])
-                    sorted_indices = torch.argsort(all_points)
-                    sorted_points = all_points[sorted_indices]
-
-                    # Initialize values for all points
-                    all_values = torch.zeros_like(sorted_points)
-
-                    # Create a mask for existing points
-                    existing_mask = sorted_points.unsqueeze(1) == pos.unsqueeze(0)
-                    existing_indices = torch.where(existing_mask.any(dim=1))[0]
-
-                    # Copy existing values - for duplicates, they'll all get the same value
-                    for idx in existing_indices:
-                        point_val = vals[existing_mask[idx].nonzero()[0]]
-                        all_values[idx] = point_val
-                        # print(f"Setting existing point at idx={idx} to value={point_val}")
-
-                    # Find indices of new points (those not in existing_indices)
-                    new_indices = torch.ones_like(sorted_points, dtype=torch.bool)
-                    new_indices[existing_indices] = False
-                    new_point_indices = torch.where(new_indices)[0]
-
-                    # For each new point, interpolate between nearest neighbors
-                    for idx in new_point_indices:
-                        point = sorted_points[idx]
-
-                        # Find nearest existing points (using original positions)
-                        left_mask = pos <= point
-                        right_mask = pos > point
-
-                        if not left_mask.any() or not right_mask.any():
-                            # If point is outside range, use nearest value
-                            nearest_idx = torch.argmin(torch.abs(pos - point))
-                            all_values[idx] = vals[nearest_idx]
-                        else:
-                            # Get rightmost left point and leftmost right point
-                            left_idx = torch.where(left_mask)[0][
-                                -1
-                            ]  # rightmost of left points
-                            right_idx = torch.where(right_mask)[0][
-                                0
-                            ]  # leftmost of right points
-
-                            # Linear interpolation between nearest points
-                            left_pos = pos[left_idx]
-                            right_pos = pos[right_idx]
-                            left_val = vals[left_idx]
-                            right_val = vals[right_idx]
-
-                            # If left and right positions are the same, use their value directly
-                            if torch.allclose(left_pos, right_pos):
-                                interpolated_val = (
-                                    left_val  # They should have the same value
-                                )
-                            else:
-                                # Compute interpolated value
-                                t = (point - left_pos) / (right_pos - left_pos)
-                                interpolated_val = left_val + t * (right_val - left_val)
-
-                            # Set this value for all duplicates of this point
-                            duplicate_mask = sorted_points == point
-                            all_values[duplicate_mask] = interpolated_val
-
-                    new_pos.append(sorted_points)
-                    new_vals.append(all_values)
-
-            # Stack all the new positions and values
-            new_pos = torch.stack([p for p in new_pos]).reshape(
-                self.num_inputs, self.num_outputs, -1
-            )
-            new_vals = torch.stack([v for v in new_vals]).reshape(
-                self.num_inputs, self.num_outputs, -1
-            )
-
-            # new_pos[:,:,0]=-1.0
-            # new_pos[:,:,-1]=1.0
-
-            # Update the buffers and parameters
-            self.positions.data = new_pos
-            self.values = nn.Parameter(new_vals)
-            self.num_points = new_pos.size(-1)
             return True
 
     def insert_nearby_point(self, point: torch.Tensor) -> bool:
@@ -261,7 +245,6 @@ class AdaptivePiecewiseLinear(nn.Module):
             bool: True if a point was inserted, False otherwise
         """
         point = make_antiperiodic(point)
-
         with torch.no_grad():
             # Ensure point has correct shape (num_inputs,)
             if point is None:
@@ -285,6 +268,9 @@ class AdaptivePiecewiseLinear(nn.Module):
                 ]  # Use first output dimension as reference
 
                 # Find points to the left and right of the target point
+                # If you don't have <= or >= and instead just use < or > 
+                # in  one of these then you'll end up with an annoying 
+                # bug. So although it looks wrong, it's done deliberately.
                 left_mask = positions <= point[i]
                 right_mask = positions >= point[i]
 
@@ -293,12 +279,8 @@ class AdaptivePiecewiseLinear(nn.Module):
                 #    return False
 
                 # Get nearest left and right points
-                left_idx = torch.where(left_mask)[0][
-                    -1
-                ]  # rightmost of left points
-                right_idx = torch.where(right_mask)[0][
-                    0
-                ]  # leftmost of right points
+                left_idx = torch.where(left_mask)[0][-1]
+                right_idx = torch.where(right_mask)[0][0]
 
                 # Calculate midpoint
                 left_pos = positions[left_idx]
@@ -532,7 +514,7 @@ class AdaptivePiecewiseLinear(nn.Module):
                 - indices: Tensor of shape (num_inputs, num_outputs, num_points-2)
                   containing the indices of the points that would be removed
         """
-        print('computing removal error')
+
         with torch.no_grad():
             # Initialize error tensors on the same device as positions
             device = self.positions.device
@@ -585,7 +567,6 @@ class AdaptivePiecewiseLinear(nn.Module):
             # Set error to 0 for duplicate points to prioritize their removal
             errors = torch.where(duplicate_counts > 1, torch.zeros_like(errors), errors)
 
-            print('finished computing removal errors')
             return errors, indices
         
 
@@ -652,7 +633,6 @@ class AdaptivePiecewiseLinear(nn.Module):
             self.positions.data = new_positions  # Make positions a parameter too
             self.values = nn.Parameter(new_values)
             self.num_points = new_num_points
-
             return True
 
     def remove_add(self, point):
