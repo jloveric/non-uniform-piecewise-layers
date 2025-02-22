@@ -525,6 +525,7 @@ class AdaptivePiecewiseLinear(nn.Module):
                 - indices: Tensor of shape (num_inputs, num_outputs, num_points-2)
                   containing the indices of the points that would be removed
         """
+        print('computing removal error')
         with torch.no_grad():
             # Initialize error tensors
             errors = torch.zeros(self.num_inputs, self.num_outputs, self.num_points - 2)
@@ -565,8 +566,9 @@ class AdaptivePiecewiseLinear(nn.Module):
                         error = abs(interp_val - vals[k])
                         errors[i, j, k - 1] = error
                         indices[i, j, k - 1] = k
-
+            print('finished computing removal errors')
             return errors, indices
+        
 
     def remove_smoothest_point(self):
         """

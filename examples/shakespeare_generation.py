@@ -69,6 +69,10 @@ class CharLevelMinGRU(nn.Module):
             
             return output_chars
 
+    def remove_add(self, x, h=None):
+        x = self.embedding(x)
+        return self.rnn.remove_add(x,h)
+
 class ShakespeareDataset(torch.utils.data.Dataset):
     def __init__(self, text, seq_length=100, max_length=None):
         self.text = text[:max_length] if max_length is not None else text
@@ -111,9 +115,12 @@ def load_tiny_shakespeare(url, cache_dir):
     
     return cache_file.read_text()
 
-def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=None):
+def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=None, remove_add_every_n_batches=10):
     model.train()
     total_loss = 0
+    max_error = None
+    max_error_input = None
+    batch_since_last_remove_add = 0
     
     for i, (sequences, targets) in enumerate(tqdm(data_loader, desc="Training")):
         sequences = sequences.to(device)
@@ -125,6 +132,27 @@ def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=Non
         optimizer.step()
         total_loss += loss.item()
         
+        # Track maximum error for adaptive layer adjustment
+        with torch.no_grad():
+            error = torch.abs(output.view(-1, output.size(-1)) - torch.nn.functional.one_hot(targets.view(-1), num_classes=output.size(-1)).float())
+            batch_max_error, batch_max_idx = error.max(dim=0)
+            if max_error is None or batch_max_error.max() > max_error.max():
+                max_error = batch_max_error
+                # Reshape input to (batch=1, time, features) for remove_add
+                batch_idx = batch_max_idx.argmax() // sequences.size(1)
+                max_error_input = sequences[batch_idx:batch_idx+1]  # Add batch dimension
+
+        batch_since_last_remove_add += 1
+        
+        # Call remove_add every n batches using the tracked maximum error
+        if batch_since_last_remove_add >= remove_add_every_n_batches and max_error_input is not None:
+            success = model.remove_add(max_error_input)
+            if success:
+                optimizer = Lion(model.parameters(), lr=optimizer.param_groups[0]['lr'])
+            max_error = None
+            max_error_input = None
+            batch_since_last_remove_add = 0
+        
         # Log batch loss to tensorboard
         if writer is not None and epoch is not None:
             writer.add_scalar('Loss/batch', loss.item(), epoch * len(data_loader) + i)
@@ -133,7 +161,7 @@ def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=Non
     if writer is not None and epoch is not None:
         writer.add_scalar('Loss/epoch', avg_loss, epoch)
     
-    return avg_loss
+    return avg_loss, optimizer
 
 @hydra.main(version_base=None, config_path="config", config_name="shakespeare_generation")
 def main(cfg: DictConfig):
@@ -183,7 +211,7 @@ def main(cfg: DictConfig):
     
     best_loss = float('inf')
     for epoch in range(cfg.training.num_epochs):
-        loss = train_epoch(model, data_loader, criterion, optimizer, writer, epoch)
+        loss, optimizer = train_epoch(model, data_loader, criterion, optimizer, writer, epoch, remove_add_every_n_batches=cfg.training.remove_add_every_n_batches)
         
         # Generate sample text with different temperatures
         if epoch % cfg.training.sample_every == 0:
