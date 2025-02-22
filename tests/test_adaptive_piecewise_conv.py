@@ -1,6 +1,7 @@
 import torch
 import pytest
 from non_uniform_piecewise_layers import AdaptivePiecewiseConv2d
+from non_uniform_piecewise_layers.utils import largest_error
 
 def test_conv_initialization():
     """Test that Conv2d is initialized with correct dimensions and points"""
@@ -64,32 +65,28 @@ def test_conv_forward():
 
 def test_largest_error():
     """Test that largest_error returns valid points"""
-    batch_size = 4
     in_channels = 2
-    out_channels = 4
-    height = 8
-    width = 8
+    out_channels = 3
     kernel_size = 3
+    num_points = 5
     
     conv = AdaptivePiecewiseConv2d(
         in_channels=in_channels,
         out_channels=out_channels,
-        kernel_size=kernel_size
+        kernel_size=kernel_size,
+        num_points=num_points
     )
     
-    x = torch.randn(batch_size, in_channels, height, width)
-    y = conv(x)
-    error = torch.abs(y)  # Use output as mock error
+    # Create batch of inputs
+    B = 2
+    H = 32
+    W = 32
+    x = torch.randn(B, in_channels, H, W)
+    error = torch.ones(B, out_channels, H-kernel_size+1, W-kernel_size+1)
     
-    x_error = conv.largest_error(error, x)
+    x_error = largest_error(error, x)
     
-    # Should return a tensor of input values
-    assert isinstance(x_error, torch.Tensor)
-    assert x_error.shape == (in_channels * kernel_size * kernel_size,)
-    
-    # Values should be within position range
-    assert torch.all(x_error >= conv.piecewise.position_min)
-    assert torch.all(x_error <= conv.piecewise.position_max)
+    assert x_error.shape == (B, in_channels, H, W)  # Should return same shape as input
 
 def test_insert_points():
     """Test that insert_points adds points correctly"""

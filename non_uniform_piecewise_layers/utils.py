@@ -4,6 +4,44 @@ from typing import List
 import torch
 from torch import Tensor
 
+def largest_error(
+        error: torch.Tensor, x: torch.Tensor, min_distance: float = 1e-6
+    ) -> torch.Tensor:
+        """
+        Find the x value that corresponds to the largest error in the batch.
+        Excludes points that are too close to existing points.
+
+        Args:
+            error (torch.Tensor): Error tensor of shape (batch_size, error)
+            x (torch.Tensor): Input tensor of shape (batch_size, num_inputs)
+            min_distance (float): Minimum distance required from existing points
+
+        Returns:
+            torch.Tensor: x value that had the largest error, or None if no valid point found
+        """
+        with torch.no_grad():
+            # Sort errors in descending order
+            sorted_errors, indices = torch.sort(error.abs().view(-1), descending=True)
+
+            # Convert to batch indices
+            batch_indices = indices // error.size(1)
+
+            # Get corresponding x values
+            candidate_x = x[batch_indices]
+
+            # Ensure points are within the valid range [-1, 1]
+            valid_range = torch.all((candidate_x >= -1) & (candidate_x <= 1), dim=1)
+            if not valid_range.any():
+                return None
+
+            # Filter points by valid range
+            candidate_x = candidate_x[valid_range]
+            if candidate_x.numel() == 0:
+                return None
+
+            # Return the first valid candidate (point with largest error)
+            return candidate_x[0:1]
+
 
 def max_abs(x: Tensor, dim: int = 1):
     return torch.max(x.abs(), dim=dim, keepdim=True)[0]

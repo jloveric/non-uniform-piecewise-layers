@@ -159,3 +159,119 @@ def test_solve_recurrence_random():
         h_t = a[:, t, :] * h_prev + b[:, t, :]
         torch.testing.assert_close(h[:, t, :], h_t, rtol=1e-4, atol=1e-4)
         h_prev = h[:, t, :]  # Use the actual computed values for next iteration
+
+def test_mingru_layer_insert_nearby_point():
+    """Test that insert_nearby_point works correctly for MinGRULayer"""
+    input_dim = 4
+    state_dim = 4
+    out_features = 3
+    num_points = 5
+    
+    layer = MinGRULayer(input_dim, state_dim, out_features, num_points)
+    
+    # Test batched case
+    B, T = 2, 3
+    x = torch.randn(B, T, input_dim)
+    h = torch.zeros(B, state_dim)
+    
+    # Get initial number of points in each adaptive layer
+    initial_z_points = layer.z_layer.positions.shape[-1]
+    initial_h_points = layer.h_layer.positions.shape[-1]
+    
+    # Insert nearby points
+    success = layer.insert_nearby_point(x, h)
+    assert success, "insert_nearby_point should succeed"
+    
+    # Check that points were added
+    assert layer.z_layer.positions.shape[-1] > initial_z_points, "z_layer should have more points"
+    assert layer.h_layer.positions.shape[-1] > initial_h_points, "h_layer should have more points"
+
+def test_mingru_layer_remove_add():
+    """Test that remove_add works correctly for MinGRULayer"""
+    input_dim = 4
+    state_dim = 4
+    out_features = 3
+    num_points = 5
+    
+    layer = MinGRULayer(input_dim, state_dim, out_features, num_points)
+    
+    # Test batched case
+    B, T = 2, 3
+    x = torch.randn(B, T, input_dim)
+    h = torch.zeros(B, state_dim)
+    
+    # Get initial number of points in each adaptive layer
+    initial_z_points = layer.z_layer.positions.shape[-1]
+    initial_h_points = layer.h_layer.positions.shape[-1]
+    
+    # Remove and add points
+    success = layer.remove_add(x, h)
+    assert success, "remove_add should succeed"
+    
+    # Check that number of points remains the same
+    assert layer.z_layer.positions.shape[-1] == initial_z_points, "z_layer should have same number of points"
+    assert layer.h_layer.positions.shape[-1] == initial_h_points, "h_layer should have same number of points"
+
+def test_mingru_stack_insert_nearby_point():
+    """Test that insert_nearby_point works correctly for MinGRUStack"""
+    input_dim = 4
+    state_dim = 4
+    out_features = 3
+    num_layers = 2
+    num_points = 5
+    
+    stack = MinGRUStack(input_dim, state_dim, out_features, num_layers, num_points)
+    
+    # Test batched case
+    B, T = 2, 3
+    x = torch.randn(B, T, input_dim)
+    h = [torch.zeros(B, state_dim) for _ in range(num_layers)]
+    
+    # Get initial number of points in each layer
+    initial_points = []
+    for layer in stack.layers:
+        initial_points.append(layer.z_layer.positions.shape[-1])
+        initial_points.append(layer.h_layer.positions.shape[-1])
+    initial_output_points = stack.output_layer.positions.shape[-1]
+    
+    # Insert nearby points
+    success = stack.insert_nearby_point(x, h)
+    assert success, "insert_nearby_point should succeed"
+    
+    # Check that points were added in all layers
+    for i, layer in enumerate(stack.layers):
+        assert layer.z_layer.positions.shape[-1] > initial_points[2*i], f"z_layer {i} should have more points"
+        assert layer.h_layer.positions.shape[-1] > initial_points[2*i+1], f"h_layer {i} should have more points"
+    assert stack.output_layer.positions.shape[-1] > initial_output_points, "output_layer should have more points"
+
+def test_mingru_stack_remove_add():
+    """Test that remove_add works correctly for MinGRUStack"""
+    input_dim = 4
+    state_dim = 4
+    out_features = 3
+    num_layers = 2
+    num_points = 5
+    
+    stack = MinGRUStack(input_dim, state_dim, out_features, num_layers, num_points)
+    
+    # Test batched case
+    B, T = 2, 3
+    x = torch.randn(B, T, input_dim)
+    h = [torch.zeros(B, state_dim) for _ in range(num_layers)]
+    
+    # Get initial number of points in each layer
+    initial_points = []
+    for layer in stack.layers:
+        initial_points.append(layer.z_layer.positions.shape[-1])
+        initial_points.append(layer.h_layer.positions.shape[-1])
+    initial_output_points = stack.output_layer.positions.shape[-1]
+    
+    # Remove and add points
+    success = stack.remove_add(x, h)
+    assert success, "remove_add should succeed"
+    
+    # Check that number of points remains the same in all layers
+    for i, layer in enumerate(stack.layers):
+        assert layer.z_layer.positions.shape[-1] == initial_points[2*i], f"z_layer {i} should have same number of points"
+        assert layer.h_layer.positions.shape[-1] == initial_points[2*i+1], f"h_layer {i} should have same number of points"
+    assert stack.output_layer.positions.shape[-1] == initial_output_points, "output_layer should have same number of points"

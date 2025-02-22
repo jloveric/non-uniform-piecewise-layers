@@ -3,14 +3,15 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import matplotlib.pyplot as plt
-import os
 from non_uniform_piecewise_layers import AdaptivePiecewiseMLP
-from lion_pytorch import Lion
+from non_uniform_piecewise_layers.utils import largest_error
 import imageio
 import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 import logging
+import os
+from lion_pytorch import Lion
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +120,7 @@ def main(cfg: DictConfig):
         
         # Call remove_add after each epoch
         error = torch.abs(y_pred-y)
-        new_value = model.largest_error(error, x)
+        new_value = largest_error(error, x)
         if new_value is not None:
             logger.debug(f'New value: {new_value}')
             model.remove_add(new_value)

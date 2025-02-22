@@ -1,6 +1,7 @@
 import torch
 import pytest
 from non_uniform_piecewise_layers import AdaptivePiecewiseMLP
+from non_uniform_piecewise_layers.utils import largest_error
 
 def test_mlp_initialization():
     """Test that MLP is initialized with correct layer widths and points"""
@@ -48,14 +49,15 @@ def test_largest_error():
         [-0.2, 0.1],
         [0.7, -0.4]
     ])
-    error = torch.ones(3, 1)  # Uniform error for each output
+    # Make one error significantly larger than others
+    error = torch.tensor([[1.0], [5.0], [2.0]])  # Second batch item has largest error
     
-    # Should return a point not too close to existing points
-    x_at_error = mlp.largest_error(error, x)
+    x_at_error = largest_error(error, x)
     
-    assert x_at_error is not None
-    assert x_at_error.shape == (1, 2)  # Should return (1, num_inputs)
-    assert torch.all((-1 <= x_at_error) & (x_at_error <= 1))
+    # Should return a single point corresponding to the largest error in the batch
+    assert x_at_error.shape == (1, 2)
+    # Should be the x value from the second batch item since it had the largest error
+    assert torch.allclose(x_at_error[0], x[1]), "Should return x from batch item with largest error"
 
 def test_insert_points():
     """Test that insert_points adds points correctly"""
@@ -152,4 +154,3 @@ def test_remove_add():
     assert not success, "Should not be able to add/remove points when only 2 points exist"
     assert all(layer.num_points == 2 for layer in mlp.layers), \
         "Number of points should not change when operation fails"
-

@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 from non_uniform_piecewise_layers import AdaptivePiecewiseMLP
+from non_uniform_piecewise_layers.utils import largest_error
 from lion_pytorch import Lion
 import imageio
 import hydra
@@ -175,7 +176,7 @@ def main(cfg: DictConfig):
         
         error = torch.abs(predictions-batched_out)
 
-        new_value = model.largest_error(error, inputs)
+        new_value = largest_error(error, inputs)
         if new_value is not None:
             success = model.remove_add(new_value)
             optimizer = generate_optimizer(model.parameters(), cfg.training.learning_rate)

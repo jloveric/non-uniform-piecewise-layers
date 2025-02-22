@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import os
 from non_uniform_piecewise_layers import NonUniformPiecewiseLinear
 from non_uniform_piecewise_layers import AdaptivePiecewiseLinear
+from non_uniform_piecewise_layers.utils import largest_error
 from lion_pytorch import Lion
 from torch.autograd.functional import jacobian
 import hydra
@@ -89,9 +90,6 @@ class SineApproximator(nn.Module):
 
     def compute_abs_grads(self, x):
         return self.piecewise.compute_abs_grads(x)
-
-    def largest_error(self, error, x):
-        return self.piecewise.largest_error(error, x)
 
     def insert_points(self, x):
         return self.piecewise.insert_points(x)
@@ -211,7 +209,7 @@ def main(cfg: DictConfig):
                (epoch - last_point_added_epoch >= cfg.training.max_epochs_between_points):
                 
                 error = torch.pow(torch.abs(output-y), cfg.training.error_exponent)
-                new_value = model.largest_error(error, x)
+                new_value = largest_error(error, x)
                 logger.debug(f'New value: {new_value}')
                 
                 success = False

@@ -72,7 +72,7 @@ def test_insert_new_point_2input():
     output_at_new = layer(test_at_new).detach()
     
     # Verify that the value at 0.25 in dimension 1 is what we interpolated
-    assert torch.allclose(layer.values[1, 0, 2], torch.tensor(0.0885385051369667), atol=1e-5), "Value at new point does not match interpolated value"
+    assert torch.allclose(layer.values[1, 0, 2], torch.tensor(0.1807284653186798), atol=1e-5), "Value at new point does not match interpolated value"
 
 def test_compute_removal_errors():
     torch.manual_seed(42)

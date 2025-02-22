@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 from non_uniform_piecewise_layers import AdaptivePiecewiseMLP
+from non_uniform_piecewise_layers.utils import largest_error
 from lion_pytorch import Lion
 
 # Set random seeds for reproducibility
@@ -229,7 +230,7 @@ def train_shape_classifier(shape, max_epochs=100, hidden_width=8):
             # Find points with largest error
             with torch.no_grad():
                 error = torch.abs(y_pred - y_train)
-            x_error = model.largest_error(error, x_train)
+            x_error = largest_error(error, x_train)
             print('x_error', x_error)
             if x_error is not None:
                 model.insert_nearby_point(x_error)

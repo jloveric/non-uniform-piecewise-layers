@@ -10,6 +10,7 @@ from non_uniform_piecewise_layers import AdaptivePiecewiseConv2d
 from lion_pytorch import Lion
 import click
 import torch.nn.functional as F
+from non_uniform_piecewise_layers.utils import largest_error
 
 # Set random seed for reproducibility
 torch.manual_seed(42)
@@ -38,12 +39,13 @@ class AdaptiveConvNet(nn.Module):
         x = self.fc1(x)
         return x
 
-    def adapt_layers(self, x, errors, max_points):
+    def adapt_layers(self, x, y, y_pred, max_points):
         """Adapt the convolutional layers based on prediction errors
         
         Args:
             x: Input batch
-            errors: Prediction errors for the batch
+            y: Target batch
+            y_pred: Predicted batch
             max_points: Maximum number of points per layer
         """
         # Check if we've reached the maximum number of nodes (20 per layer)
@@ -52,7 +54,8 @@ class AdaptiveConvNet(nn.Module):
             return
 
         # Find input corresponding to largest error
-        x_error = self.largest_error(errors, x)
+        errors = torch.abs(y_pred - y)
+        x_error = largest_error(errors, x)
         if x_error is not None:
             # Forward pass to get intermediate activations for the high-error input
             with torch.no_grad():
@@ -93,15 +96,6 @@ class AdaptiveConvNet(nn.Module):
                 
                 if self.conv2.piecewise.positions.shape[-1] < max_points:
                     self.conv2.insert_nearby_point(x2_point)
-
-    def largest_error(self, errors, x):
-        """Find the input corresponding to the largest error"""
-        max_error_idx = torch.argmax(errors)
-        # Ensure we return a batch dimension
-        
-        max_error = x[max_error_idx:max_error_idx+1]
-        #print('max_error', max_error)
-        return max_error
 
 def generate_optimizer(parameters, learning_rate):
     """Generate the optimizer for training"""
@@ -144,7 +138,7 @@ def train(model, train_loader, test_loader, epochs, device, learning_rate, max_p
         if epoch > 0:  # Skip first epoch to allow initial convergence
             _, predicted = torch.max(output.data, 1)
             errors = (predicted != target).float()
-            model.adapt_layers(data, errors, max_points)
+            model.adapt_layers(data, target, output, max_points)
             optimizer = generate_optimizer(model.parameters(), learning_rate)
         
         # Evaluate on test set
