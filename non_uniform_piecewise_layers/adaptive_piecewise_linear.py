@@ -293,8 +293,12 @@ class AdaptivePiecewiseLinear(nn.Module):
                 #    return False
 
                 # Get nearest left and right points
-                left_idx = torch.where(left_mask)[0][-1]
-                right_idx = torch.where(right_mask)[0][0]
+                left_idx = torch.where(left_mask)[0][
+                    -1
+                ]  # rightmost of left points
+                right_idx = torch.where(right_mask)[0][
+                    0
+                ]  # leftmost of right points
 
                 # Calculate midpoint
                 left_pos = positions[left_idx]
@@ -308,6 +312,9 @@ class AdaptivePiecewiseLinear(nn.Module):
                 #    return False
 
                 midpoints.append(midpoint)
+
+            if not midpoints:
+                return False
 
             # Create tensor of midpoints and insert them
             midpoints = torch.tensor(midpoints, device=point.device)
@@ -527,45 +534,57 @@ class AdaptivePiecewiseLinear(nn.Module):
         """
         print('computing removal error')
         with torch.no_grad():
-            # Initialize error tensors
-            errors = torch.zeros(self.num_inputs, self.num_outputs, self.num_points - 2)
-            indices = torch.zeros(
-                self.num_inputs, self.num_outputs, self.num_points - 2, dtype=torch.long
+            # Initialize error tensors on the same device as positions
+            device = self.positions.device
+            errors = torch.zeros(self.num_inputs, self.num_outputs, self.num_points - 2, device=device)
+            indices = torch.arange(1, self.num_points - 1, device=device).expand(
+                self.num_inputs, self.num_outputs, -1
             )
 
-            # For each input-output pair
-            for i in range(self.num_inputs):
-                for j in range(self.num_outputs):
-                    # Get positions and values for this input-output pair
-                    pos = self.positions[i, j]
-                    vals = self.values[i, j]
+            # Get positions and values for all points
+            # Shape: (num_inputs, num_outputs, num_points)
+            pos = self.positions
+            vals = self.values
 
-                    # First check for duplicate points
-                    # For each point, check if it has the same position as any other point
-                    for k in range(1, self.num_points - 1):  # Skip endpoints
-                        # Find all points with the same position
-                        duplicates = torch.where(torch.isclose(pos[k], pos))[0]
-                        if duplicates.size(0) > 1:  # If we found duplicates
-                            # Set error to 0 to prioritize removing this point
-                            errors[i, j, k - 1] = 0
-                            indices[i, j, k - 1] = k
-                            continue
+            # Get left and right points for each internal point
+            # Shape: (num_inputs, num_outputs, num_points-2)
+            left_pos = pos[..., :-2]  # All points except last two
+            mid_pos = pos[..., 1:-1]  # All internal points
+            right_pos = pos[..., 2:]  # All points except first two
+            
+            left_vals = vals[..., :-2]
+            mid_vals = vals[..., 1:-1]
+            right_vals = vals[..., 2:]
 
-                        # For non-duplicate points, compute removal error
-                        # Get left and right points
-                        left_pos = pos[k - 1]
-                        right_pos = pos[k + 1]
-                        left_val = vals[k - 1]
-                        right_val = vals[k + 1]
+            # Check for duplicate points by comparing each internal point with all points
+            # Expand dimensions for broadcasting
+            # Shape: (num_inputs, num_outputs, num_points-2, num_points)
+            mid_pos_expanded = mid_pos.unsqueeze(-1)
+            pos_expanded = pos.unsqueeze(-2)
+            
+            # Find duplicates by checking if positions are equal
+            # Shape: (num_inputs, num_outputs, num_points-2, num_points)
+            duplicates = torch.isclose(mid_pos_expanded, pos_expanded)
+            # Count number of duplicates for each internal point
+            # Shape: (num_inputs, num_outputs, num_points-2)
+            duplicate_counts = duplicates.sum(dim=-1)
+            
+            # Compute interpolation for non-duplicate points
+            # Calculate interpolation parameter t
+            # Shape: (num_inputs, num_outputs, num_points-2)
+            t = (mid_pos - left_pos) / (right_pos - left_pos)
+            
+            # Compute interpolated values
+            # Shape: (num_inputs, num_outputs, num_points-2)
+            interp_vals = left_vals + t * (right_vals - left_vals)
+            
+            # Compute errors as absolute differences
+            # Shape: (num_inputs, num_outputs, num_points-2)
+            errors = torch.abs(interp_vals - mid_vals)
+            
+            # Set error to 0 for duplicate points to prioritize their removal
+            errors = torch.where(duplicate_counts > 1, torch.zeros_like(errors), errors)
 
-                        # Compute interpolated value at the point being removed
-                        t = (pos[k] - left_pos) / (right_pos - left_pos)
-                        interp_val = left_val + t * (right_val - left_val)
-
-                        # Compute error as absolute difference
-                        error = abs(interp_val - vals[k])
-                        errors[i, j, k - 1] = error
-                        indices[i, j, k - 1] = k
             print('finished computing removal errors')
             return errors, indices
         
