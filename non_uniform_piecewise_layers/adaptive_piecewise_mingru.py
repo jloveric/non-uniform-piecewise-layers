@@ -243,7 +243,7 @@ class MinGRUStack(torch.nn.Module):
         current_x_reshaped = current_x.reshape(-1, current_x.size(-1))
         output = self.output_layer(current_x_reshaped).reshape(B, T, -1)
 
-        return output, hidden_states
+        return output, tuple(hidden_states)
 
     def remove_add(self, x, h=None):
         """
