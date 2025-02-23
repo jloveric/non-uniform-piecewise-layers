@@ -4,14 +4,6 @@
 
 A PyTorch implementation of non-uniform piecewise linear layers. These layers can learn arbitrary continuous piecewise linear functions, where both the positions (x-coordinates) and values (y-coordinates) of the control points are learned parameters.
 
-## Features
-
-- Fully differentiable piecewise linear functions
-- Learnable control point positions and values
-- Support for multiple input and output dimensions
-- Automatic monotonicity enforcement of control point positions
-- Efficient vectorized implementation for fast forward pass
-
 ## Installation
 
 ```bash
@@ -68,6 +60,8 @@ The layer consists of the following learnable parameters:
 
 For each input-output pair, the layer learns a separate piecewise linear function defined by `num_points` control points. The forward pass performs efficient linear interpolation between these points.
 
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+## Shakespeare
+Approaching good results with things like this
+```
+python examples/shakespeare_generation.py -m training.learning_rate=1e-3 training.num_epochs=20 training.remove_add_every_n_batches=200 model.hidden_size=32,64 model.num_points=32 training.batch_size=128
+```
