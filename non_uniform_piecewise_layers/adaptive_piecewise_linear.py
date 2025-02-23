@@ -12,6 +12,7 @@ class AdaptivePiecewiseLinear(nn.Module):
         num_points: int,
         position_range=(-1, 1),
         anti_periodic: bool = True,
+        position_init: str = "uniform",
     ):
         """
         Initialize an adaptive piecewise linear layer where positions are not learnable.
@@ -22,37 +23,45 @@ class AdaptivePiecewiseLinear(nn.Module):
             num_outputs (int): Number of output features
             num_points (int): Initial number of points per piecewise function
             position_range (tuple): Tuple of (min, max) for allowed position range. Default is (-1, 1)
+            anti_periodic (bool): Whether to use anti-periodic boundary conditions. Default is True
+            position_init (str): Position initialization method. Must be one of ["uniform", "random"]. Default is "uniform"
         """
         super().__init__()
 
-        self.position_min, self.position_max = position_range
+        if position_init not in ["uniform", "random"]:
+            raise ValueError("position_init must be one of ['uniform', 'random']")
 
-        # Initialize fixed positions (not learnable)
-        self.register_buffer(
-            "positions",
-            torch.linspace(self.position_min, self.position_max, num_points).repeat(
-                num_inputs, num_outputs, 1
-            ),
-        )
+        self.position_min, self.position_max = position_range
+        self.num_inputs = num_inputs
+        self.num_outputs = num_outputs
+        self.num_points = num_points
+        self.anti_periodic = anti_periodic
+
+        # Initialize positions based on initialization method
+        if position_init == "uniform":
+            # Original uniform initialization
+            positions = torch.linspace(self.position_min, self.position_max, num_points).repeat(num_inputs, num_outputs, 1)
+        else:  # random
+            # Create random positions between -1 and 1
+            positions = torch.rand(num_inputs, num_outputs, num_points) * (self.position_max - self.position_min) + self.position_min
+            # Sort positions along last dimension to maintain order
+            positions, _ = torch.sort(positions, dim=-1)
+            # Fix first and last positions to be -1 and 1
+            positions[..., 0] = self.position_min
+            positions[..., -1] = self.position_max
+
+        self.register_buffer("positions", positions)
 
         # Initialize each input-output pair with a random line (collinear points)
-        
         # The factor 0.5 is from trial and error to get a stable solution with mingru
         # the rest is just central limit theorem
         factor = 0.5*math.sqrt(1.0/(3*num_inputs))
         
         start = torch.empty(num_inputs, num_outputs).uniform_(-factor, factor)
         end = torch.empty(num_inputs, num_outputs).uniform_(-factor, factor)
-        weights = torch.linspace(0, 1, num_points, device=start.device).view(
-            1, 1, num_points
-        )
+        weights = torch.linspace(0, 1, num_points, device=start.device).view(1, 1, num_points)
         values_line = start.unsqueeze(-1) * (1 - weights) + end.unsqueeze(-1) * weights
         self.values = nn.Parameter(values_line)
-
-        self.num_inputs = num_inputs
-        self.num_outputs = num_outputs
-        self.num_points = num_points
-        self.anti_periodic = anti_periodic
 
     def insert_positions(self, x_values: torch.Tensor):
         """

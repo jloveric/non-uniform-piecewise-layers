@@ -24,7 +24,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 logger.info(f"Using device: {device}")
 
 class CharLevelMinGRU(nn.Module):
-    def __init__(self, n_chars, hidden_size=256, num_layers=2, num_points=10):
+    def __init__(self, n_chars, hidden_size=256, num_layers=2, num_points=10, position_init="random"):
         super().__init__()
         self.n_chars = n_chars
         # Embedding layer to convert character indices to vectors
@@ -35,7 +35,8 @@ class CharLevelMinGRU(nn.Module):
             state_dim=hidden_size,
             out_features=n_chars,
             layers=num_layers,
-            num_points=num_points
+            num_points=num_points,
+            position_init=position_init
         )
         # Output layer
         #self.fc = nn.Linear(hidden_size, n_chars)
@@ -231,7 +232,8 @@ def main(cfg: DictConfig):
         n_chars=dataset.vocab_size,
         hidden_size=cfg.model.hidden_size,
         num_layers=cfg.model.num_layers,
-        num_points=cfg.model.num_points
+        num_points=cfg.model.num_points,
+        position_init=cfg.model.position_init
     ).to(device)  # Move model to GPU
     print('Finished building model')
     criterion = nn.CrossEntropyLoss()

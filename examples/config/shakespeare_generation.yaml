@@ -11,6 +11,7 @@ model:
   hidden_size: 16
   num_layers: 2
   num_points: 128
+  position_init: random #uniform
 
 training:
   batch_size: 128

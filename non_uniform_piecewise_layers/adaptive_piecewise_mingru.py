@@ -87,12 +87,12 @@ def prefix_sum_hidden_states(z, h_bar, h0):
 
 
 class MinGRULayer(torch.nn.Module):
-    def __init__(self, input_dim, state_dim, out_features, num_points):
+    def __init__(self, input_dim, state_dim, out_features, num_points, position_init="uniform"):
         super(MinGRULayer, self).__init__()
 
         # Register layers as submodules
-        self.add_module('z_layer', AdaptivePiecewiseLinear(num_inputs=input_dim, num_outputs=state_dim, num_points=num_points))
-        self.add_module('h_layer', AdaptivePiecewiseLinear(num_inputs=input_dim, num_outputs=state_dim, num_points=num_points))
+        self.add_module('z_layer', AdaptivePiecewiseLinear(num_inputs=input_dim, num_outputs=state_dim, num_points=num_points, position_init=position_init))
+        self.add_module('h_layer', AdaptivePiecewiseLinear(num_inputs=input_dim, num_outputs=state_dim, num_points=num_points, position_init=position_init))
         self.hidden_size = state_dim
     
     def forward(self, x, h):
@@ -173,20 +173,20 @@ class MinGRULayer(torch.nn.Module):
 
 
 class MinGRUStack(torch.nn.Module):
-    def __init__(self, input_dim, state_dim, out_features, layers, num_points):
+    def __init__(self, input_dim, state_dim, out_features, layers, num_points, position_init="uniform"):
         super(MinGRUStack, self).__init__()
         self.layers = torch.nn.ModuleList()
 
         self.layers.append(
-            MinGRULayer(input_dim=input_dim, state_dim=state_dim, out_features=state_dim, num_points=num_points)
+            MinGRULayer(input_dim=input_dim, state_dim=state_dim, out_features=state_dim, num_points=num_points, position_init=position_init)
         )
         for _ in range(layers - 1):
             self.layers.append(
-                MinGRULayer(input_dim=state_dim, state_dim=state_dim, out_features=state_dim, num_points=num_points)
+                MinGRULayer(input_dim=state_dim, state_dim=state_dim, out_features=state_dim, num_points=num_points, position_init=position_init)
             )
 
         # Register output layer as a named module
-        self.add_module('output_layer', AdaptivePiecewiseLinear(num_inputs=state_dim, num_outputs=out_features, num_points=num_points))
+        self.add_module('output_layer', AdaptivePiecewiseLinear(num_inputs=state_dim, num_outputs=out_features, num_points=num_points, position_init=position_init))
         self.state_dim = state_dim
 
     def forward(self, x, h=None):
