@@ -118,50 +118,86 @@ def load_tiny_shakespeare(url, cache_dir):
 def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=None, remove_add_every_n_batches=10):
     model.train()
     total_loss = 0
+    total_accuracy = 0
+    num_batches = 0
+    batch_since_last_remove_add = 0
     max_error = None
     max_error_input = None
-    batch_since_last_remove_add = 0
     
     for i, (sequences, targets) in enumerate(tqdm(data_loader, desc="Training")):
         sequences = sequences.to(device)
         targets = targets.to(device)
         optimizer.zero_grad()
-        output, _ = model(sequences)
+        output, h = model(sequences)
         loss = criterion(output.view(-1, output.size(-1)), targets.view(-1))
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
         
-        # Track maximum error for adaptive layer adjustment
-        with torch.no_grad():
-            error = torch.abs(output.view(-1, output.size(-1)) - torch.nn.functional.one_hot(targets.view(-1), num_classes=output.size(-1)).float())
-            batch_max_error, batch_max_idx = error.max(dim=0)
-            if max_error is None or batch_max_error.max() > max_error.max():
-                max_error = batch_max_error
-                # Reshape input to (batch=1, time, features) for remove_add
-                batch_idx = batch_max_idx.argmax() // sequences.size(1)
-                max_error_input = sequences[batch_idx:batch_idx+1]  # Add batch dimension
-
+        # Calculate accuracy
+        predictions = output.view(-1, output.size(-1)).argmax(dim=1)
+        correct = (predictions == targets.view(-1)).float().mean()
+        total_accuracy += correct.item()
+        num_batches += 1
+        
         batch_since_last_remove_add += 1
         
         # Call remove_add every n batches using the tracked maximum error
-        if batch_since_last_remove_add >= remove_add_every_n_batches and max_error_input is not None:
-            success = model.remove_add(max_error_input)
+        if batch_since_last_remove_add >= remove_add_every_n_batches: #and max_error_input is not None:
+            # Track maximum error for adaptive layer adjustment
+            with torch.no_grad():
+
+                tv = torch.nn.functional.one_hot(targets.view(-1), num_classes=output.size(-1)).float()
+                #print('tv.shape', tv.shape)
+
+                # Sum of the absolute error
+                B, T, V=output.shape
+                #print('targets.shape', targets.shape,'output.shape', output.shape)
+                error = output.view(-1,output.size(-1)) - torch.nn.functional.one_hot(targets.view(-1), num_classes=output.size(-1)).float()
+                
+                # Sum errors along ascii dimension to procude [B,T]
+                error = torch.sum(torch.abs(error.view(B,T,V)),dim=2)
+                #print('error.shape', error.shape)
+                #print('error.max', error.view(-1).max(dim=0))
+                batch_max_error, flat_idx = error.view(-1).max(dim=0)
+                B_idx, T_idx = torch.unravel_index(flat_idx, error.shape)
+
+                x_error = sequences[B_idx,T_idx].unsqueeze(0).unsqueeze(0)
+                #print('h', h[0].shape)
+                h_error = [this_h[B_idx,T_idx].unsqueeze(0) for this_h in h]
+                #print('x_error', x_error,'h_error',h_error)
+                #print('h_error', h_error[0].shape)
+
+                #print('batch_max_error', batch_max_error, batch_max_error.shape, 'batch max index', batch_max_idx)
+
+                if max_error is None or batch_max_error > max_error:
+                    max_error = batch_max_error
+                    # Reshape input to (batch=1, time, features) for remove_add
+                    #batch_idx = batch_max_idx.argmax() // sequences.size(1)
+                    max_error_input = (x_error, h_error)  # Add batch dimension
+                    #print('outputs.shape', output.shape)
+                    #print('error.shape', error.shape)
+                    #print('max_error', max_error)
+            
+            success = model.remove_add(*max_error_input)
             if success:
                 optimizer = Lion(model.parameters(), lr=optimizer.param_groups[0]['lr'])
             max_error = None
             max_error_input = None
             batch_since_last_remove_add = 0
         
-        # Log batch loss to tensorboard
+        # Log batch loss and accuracy to tensorboard
         if writer is not None and epoch is not None:
             writer.add_scalar('Loss/batch', loss.item(), epoch * len(data_loader) + i)
+            writer.add_scalar('Accuracy/batch', correct.item(), epoch * len(data_loader) + i)
             
     avg_loss = total_loss / len(data_loader)
+    avg_accuracy = total_accuracy / num_batches
     if writer is not None and epoch is not None:
         writer.add_scalar('Loss/epoch', avg_loss, epoch)
+        writer.add_scalar('Accuracy/epoch', avg_accuracy, epoch)
     
-    return avg_loss, optimizer
+    return avg_loss, avg_accuracy, optimizer
 
 @hydra.main(version_base=None, config_path="config", config_name="shakespeare_generation")
 def main(cfg: DictConfig):
@@ -211,7 +247,7 @@ def main(cfg: DictConfig):
     
     best_loss = float('inf')
     for epoch in range(cfg.training.num_epochs):
-        loss, optimizer = train_epoch(model, data_loader, criterion, optimizer, writer, epoch, remove_add_every_n_batches=cfg.training.remove_add_every_n_batches)
+        loss, accuracy, optimizer = train_epoch(model, data_loader, criterion, optimizer, writer, epoch, remove_add_every_n_batches=cfg.training.remove_add_every_n_batches)
         
         # Generate sample text with different temperatures
         if epoch % cfg.training.sample_every == 0:
