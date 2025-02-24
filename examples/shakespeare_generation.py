@@ -116,6 +116,47 @@ def load_tiny_shakespeare(url, cache_dir):
     
     return cache_file.read_text()
 
+class PlateauDetector:
+    def __init__(self, patience=5, min_delta=1e-4, mode='min'):
+        """
+        Initialize plateau detector
+        Args:
+            patience: Number of epochs to wait before triggering plateau detection
+            min_delta: Minimum change in metric to be considered as improvement
+            mode: 'min' for loss, 'max' for accuracy
+        """
+        self.patience = patience
+        self.min_delta = min_delta
+        self.mode = mode
+        self.best_value = float('inf') if mode == 'min' else float('-inf')
+        self.counter = 0
+        self.history = []
+        
+    def update(self, value):
+        """
+        Update the plateau detector with a new value
+        Returns True if plateau is detected
+        """
+        self.history.append(value)
+        
+        if self.mode == 'min':
+            improved = value < (self.best_value - self.min_delta)
+        else:
+            improved = value > (self.best_value + self.min_delta)
+            
+        if improved:
+            self.best_value = value
+            self.counter = 0
+            return False
+        else:
+            self.counter += 1
+            return self.counter >= self.patience
+            
+    def reset(self):
+        """Reset the plateau detector"""
+        self.best_value = float('inf') if self.mode == 'min' else float('-inf')
+        self.counter = 0
+
 def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=None, remove_add_every_n_batches=10):
     model.train()
     total_loss = 0
@@ -248,8 +289,31 @@ def main(cfg: DictConfig):
     os.makedirs(checkpoint_dir, exist_ok=True)
     
     best_loss = float('inf')
+    # Store original remove_add_every_n_batches value
+    original_remove_add_every_n_batches = cfg.training.remove_add_every_n_batches
+    
+    # Initialize plateau detectors for both loss and accuracy
+    loss_plateau_detector = PlateauDetector(
+        patience=cfg.training.plateau_patience if hasattr(cfg.training, 'plateau_patience') else 5,
+        min_delta=cfg.training.plateau_min_delta if hasattr(cfg.training, 'plateau_min_delta') else 1e-4,
+        mode='min'
+    )
+    
     for epoch in range(cfg.training.num_epochs):
         loss, accuracy, optimizer = train_epoch(model, data_loader, criterion, optimizer, writer, epoch, remove_add_every_n_batches=cfg.training.remove_add_every_n_batches)
+        
+        # Check for plateaus
+        loss_plateaued = loss_plateau_detector.update(loss)
+        
+        if loss_plateaued:
+            logger.info(f"Plateau detected at epoch {epoch}. Loss plateaued: {loss_plateaued}")
+            # Force a remove_add step by setting remove_add_every_n_batches to 1 for next epoch
+            cfg.training.remove_add_every_n_batches = 1
+            # Reset plateau detectors
+            loss_plateau_detector.reset()
+        else:
+            # Reset to original value if no plateau
+            cfg.training.remove_add_every_n_batches = original_remove_add_every_n_batches
         
         # Generate sample text with different temperatures
         if epoch % cfg.training.sample_every == 0:
