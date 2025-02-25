@@ -228,14 +228,16 @@ def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=Non
                     max_error = batch_max_error
                     # Reshape input to (batch=1, time, features) for remove_add
                     #batch_idx = batch_max_idx.argmax() // sequences.size(1)
-                    max_error_input = (x_error, h_error)  # Add batch dimension
+                    #max_error_input = (x_error, h_error)  # Add batch dimension
+                    max_error_input = (x_error, None)
                     #print('outputs.shape', output.shape)
                     #print('error.shape', error.shape)
                     #print('max_error', max_error)
             
-            print("Moving points")
+            
             success = model.remove_add(*max_error_input)
             if success:
+                print('Moved points!')
                 optimizer = Lion(model.parameters(), lr=optimizer.param_groups[0]['lr'])
             max_error = None
             max_error_input = None
