@@ -218,7 +218,10 @@ def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=Non
 
                 x_error = sequences[B_idx,T_idx].unsqueeze(0).unsqueeze(0)
                 #print('h', h[0].shape)
-                h_error = [this_h[B_idx,T_idx].unsqueeze(0) for this_h in h]
+                if T_idx > 0:
+                    h_error = [this_h[B_idx,T_idx-1].unsqueeze(0) for this_h in h]
+                else :
+                    h_error=0
                 #print('x_error', x_error,'h_error',h_error)
                 #print('h_error', h_error[0].shape)
 
@@ -228,8 +231,8 @@ def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=Non
                     max_error = batch_max_error
                     # Reshape input to (batch=1, time, features) for remove_add
                     #batch_idx = batch_max_idx.argmax() // sequences.size(1)
-                    #max_error_input = (x_error, h_error)  # Add batch dimension
-                    max_error_input = (x_error, None)
+                    max_error_input = (x_error, h_error)  # Add batch dimension
+                    #max_error_input = (x_error, None)
                     #print('outputs.shape', output.shape)
                     #print('error.shape', error.shape)
                     #print('max_error', max_error)
