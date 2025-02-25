@@ -157,7 +157,7 @@ class PlateauDetector:
         self.best_value = float('inf') if self.mode == 'min' else float('-inf')
         self.counter = 0
 
-def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=None, remove_add_every_n_batches=10):
+def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=None, remove_add_every_n_batches=10, plateau_mode=False, plateau_adjustments=3):
     model.train()
     total_loss = 0
     total_accuracy = 0
@@ -165,6 +165,12 @@ def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=Non
     batch_since_last_remove_add = 0
     max_error = None
     max_error_input = None
+    
+    # In plateau mode, calculate when to do the remove_add operations
+    if plateau_mode:
+        total_batches = len(data_loader)
+        # Spread the adjustments evenly across the epoch
+        adjustment_points = [total_batches // (plateau_adjustments + 1) * (i + 1) for i in range(plateau_adjustments)]
     
     for i, (sequences, targets) in enumerate(tqdm(data_loader, desc="Training")):
         sequences = sequences.to(device)
@@ -184,8 +190,14 @@ def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=Non
         
         batch_since_last_remove_add += 1
         
-        # Call remove_add every n batches using the tracked maximum error
-        if batch_since_last_remove_add >= remove_add_every_n_batches: #and max_error_input is not None:
+        # Determine if we should do remove_add based on mode
+        should_remove_add = (
+            (plateau_mode and i in adjustment_points) or
+            (not plateau_mode and batch_since_last_remove_add >= remove_add_every_n_batches)
+        )
+        
+        # Call remove_add if conditions are met
+        if should_remove_add:
             # Track maximum error for adaptive layer adjustment
             with torch.no_grad():
 
@@ -221,6 +233,7 @@ def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=Non
                     #print('error.shape', error.shape)
                     #print('max_error', max_error)
             
+            print("Moving points")
             success = model.remove_add(*max_error_input)
             if success:
                 optimizer = Lion(model.parameters(), lr=optimizer.param_groups[0]['lr'])
@@ -294,26 +307,32 @@ def main(cfg: DictConfig):
     
     # Initialize plateau detectors for both loss and accuracy
     loss_plateau_detector = PlateauDetector(
-        patience=cfg.training.plateau_patience if hasattr(cfg.training, 'plateau_patience') else 5,
-        min_delta=cfg.training.plateau_min_delta if hasattr(cfg.training, 'plateau_min_delta') else 1e-4,
+        patience=cfg.training.plateau_patience,
+        min_delta=cfg.training.plateau_min_delta,
         mode='min'
     )
     
+    plateau_mode = False  # Track if we're in plateau recovery mode
+    
     for epoch in range(cfg.training.num_epochs):
-        loss, accuracy, optimizer = train_epoch(model, data_loader, criterion, optimizer, writer, epoch, remove_add_every_n_batches=cfg.training.remove_add_every_n_batches)
+        loss, accuracy, optimizer = train_epoch(
+            model, data_loader, criterion, optimizer, writer, epoch, 
+            remove_add_every_n_batches=cfg.training.remove_add_every_n_batches,
+            plateau_mode=plateau_mode,
+            plateau_adjustments=cfg.training.plateau_adjustments
+        )
         
         # Check for plateaus
         loss_plateaued = loss_plateau_detector.update(loss)
         
         if loss_plateaued:
-            logger.info(f"Plateau detected at epoch {epoch}. Loss plateaued: {loss_plateaued}")
-            # Force a remove_add step by setting remove_add_every_n_batches to 1 for next epoch
-            cfg.training.remove_add_every_n_batches = 1
-            # Reset plateau detectors
+            logger.info(f"Plateau detected at epoch {epoch}. Entering plateau recovery mode.")
+            plateau_mode = True
             loss_plateau_detector.reset()
         else:
-            # Reset to original value if no plateau
-            cfg.training.remove_add_every_n_batches = original_remove_add_every_n_batches
+            if plateau_mode:
+                logger.info(f"Exiting plateau recovery mode at epoch {epoch}.")
+            plateau_mode = False
         
         # Generate sample text with different temperatures
         if epoch % cfg.training.sample_every == 0:
