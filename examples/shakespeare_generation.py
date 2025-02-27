@@ -244,7 +244,11 @@ def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=Non
                 error_tracking = []
                 batch_since_last_remove_add = 0
         else:
-            model.move_smoothest()
+            if batch_since_last_remove_add >= remove_add_every_n_batches:
+                model.move_smoothest()
+                optimizer = Lion(model.parameters(), lr=optimizer.param_groups[0]['lr'])
+                batch_since_last_remove_add = 0
+
             
         # Log batch loss and accuracy to tensorboard
         if writer is not None and epoch is not None:
