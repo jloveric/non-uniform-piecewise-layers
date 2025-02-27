@@ -101,7 +101,7 @@ def main(cfg: DictConfig):
     # Training loop
     for epoch in range(cfg.training.num_epochs):
         # Generate target data based on epoch
-        position = 'left' if epoch < cfg.training.switch_epoch else 'right'
+        position = 'left' if epoch < cfg.training.num_epochs//2 else 'right'
         y = generate_square_wave(
             x, 
             position=position,
@@ -118,14 +118,20 @@ def main(cfg: DictConfig):
         loss.backward()
         optimizer.step()
         
-        # Call remove_add after each epoch
-        error = torch.abs(y_pred-y)
-        new_value = largest_error(error, x)
-        if new_value is not None:
-            logger.debug(f'New value: {new_value}')
-            model.remove_add(new_value)
-            optimizer = generate_optimizer(model.parameters(), cfg.training.learning_rate)
-        
+        if epoch % cfg.training.refine_every_n_epochs==0:
+            if cfg.training.adapt == "largest_error":
+                # Call remove_add after each epoch
+                error = torch.abs(y_pred-y)
+                new_value = largest_error(error, x)
+                if new_value is not None:
+                    logger.debug(f'New value: {new_value}')
+                    model.remove_add(new_value)
+                    optimizer = generate_optimizer(model.parameters(), cfg.training.learning_rate)
+            elif cfg.training.adapt == "move":
+                logger.debug(f'Moving value')
+                model.move_smoothest()
+                optimizer = generate_optimizer(model.parameters(), cfg.training.learning_rate)
+
         # Save progress plot at specified intervals
         if epoch % cfg.visualization.plot_interval == 0:
             save_progress_plot(model, x, y, epoch, loss.item(), position)

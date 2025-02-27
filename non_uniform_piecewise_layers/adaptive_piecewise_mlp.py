@@ -156,3 +156,22 @@ class AdaptivePiecewiseMLP(nn.Module):
                     success = False
         
         return success
+
+    def move_smoothest(self):
+        """
+        For each layer in the MLP, remove the point with the smallest removal error (smoothest point)
+        and insert a new point randomly to the left or right of the point that would cause the
+        largest error when removed.
+        
+        Returns:
+            bool: True if points were successfully moved in all layers, False otherwise.
+        """
+        with torch.no_grad():
+            # Try moving the smoothest point in each layer
+            success = True
+            for layer in self.layers:
+                success_ = layer.move_smoothest()
+                if not success_:
+                    success = False
+        
+        return success
