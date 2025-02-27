@@ -74,6 +74,9 @@ class CharLevelMinGRU(nn.Module):
         x = self.embedding(x)
         return self.rnn.remove_add(x,h)
 
+    def move_smoothest(self):
+        return self.rnn.move_smoothest()
+
 class ShakespeareDataset(torch.utils.data.Dataset):
     def __init__(self, text, seq_length=100, max_length=None):
         self.text = text[:max_length] if max_length is not None else text
@@ -157,7 +160,7 @@ class PlateauDetector:
         self.best_value = float('inf') if self.mode == 'min' else float('-inf')
         self.counter = 0
 
-def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=None, remove_add_every_n_batches=10, plateau_mode=False, plateau_adjustments=3, error_tracking_batches=5):
+def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=None, remove_add_every_n_batches=10, plateau_mode=False, plateau_adjustments=3, error_tracking_batches=5,adapt="move"):
     model.train()
     total_loss = 0
     total_accuracy = 0
@@ -193,53 +196,56 @@ def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=Non
         
         batch_since_last_remove_add += 1
         
-        # Calculate error for this batch
-        with torch.no_grad():
-            B, T, V = output.shape
-            error = output.view(-1, output.size(-1)) - torch.nn.functional.one_hot(targets.view(-1), num_classes=output.size(-1)).float()
-            error = torch.sum(torch.abs(error.view(B, T, V)), dim=2)
-            batch_max_error, flat_idx = error.view(-1).max(dim=0)
-            B_idx, T_idx = torch.unravel_index(flat_idx, error.shape)
-            
-            # Store error information for this batch
-            x_error = sequences[B_idx, T_idx].unsqueeze(0).unsqueeze(0)
-            if T_idx > 0:
-                h_error = [this_h[B_idx, T_idx-1].unsqueeze(0) for this_h in h]
-            else:
-                h_error = 0
+        if adapt == "largest_error":
+            # Calculate error for this batch
+            with torch.no_grad():
+                B, T, V = output.shape
+                error = output.view(-1, output.size(-1)) - torch.nn.functional.one_hot(targets.view(-1), num_classes=output.size(-1)).float()
+                error = torch.sum(torch.abs(error.view(B, T, V)), dim=2)
+                batch_max_error, flat_idx = error.view(-1).max(dim=0)
+                B_idx, T_idx = torch.unravel_index(flat_idx, error.shape)
                 
-            error_tracking.append({
-                'error': batch_max_error,
-                'x_error': x_error,
-                'h_error': h_error,
-                'batch_idx': i
-            })
+                # Store error information for this batch
+                x_error = sequences[B_idx, T_idx].unsqueeze(0).unsqueeze(0)
+                if T_idx > 0:
+                    h_error = [this_h[B_idx, T_idx-1].unsqueeze(0) for this_h in h]
+                else:
+                    h_error = 0
+                    
+                error_tracking.append({
+                    'error': batch_max_error,
+                    'x_error': x_error,
+                    'h_error': h_error,
+                    'batch_idx': i
+                })
+                
+                # Keep only the last error_tracking_batches
+                if len(error_tracking) > error_tracking_batches:
+                    error_tracking.pop(0)
             
-            # Keep only the last error_tracking_batches
-            if len(error_tracking) > error_tracking_batches:
-                error_tracking.pop(0)
-        
         # Determine if we should do remove_add based on mode
         should_remove_add = (
             (plateau_mode and i in adjustment_points) or
             (not plateau_mode and batch_since_last_remove_add >= remove_add_every_n_batches)
         )
-        
-        # Call remove_add if conditions are met
-        if should_remove_add and error_tracking:
-            # Find the maximum error across all tracked batches
-            max_error_batch = max(error_tracking, key=lambda x: x['error'])
-            max_error_input = (max_error_batch['x_error'], max_error_batch['h_error'])
+        if adapt=="largest_error":
+            # Call remove_add if conditions are met
+            if should_remove_add and error_tracking:
+                # Find the maximum error across all tracked batches
+                max_error_batch = max(error_tracking, key=lambda x: x['error'])
+                max_error_input = (max_error_batch['x_error'], max_error_batch['h_error'])
+                
+                success = model.remove_add(*max_error_input)
+                if success:
+                    print(f'Moved points! Using error from batch {max_error_batch["batch_idx"]}')
+                    optimizer = Lion(model.parameters(), lr=optimizer.param_groups[0]['lr'])
+                
+                # Clear error tracking after remove_add
+                error_tracking = []
+                batch_since_last_remove_add = 0
+        else:
+            model.move_smoothest()
             
-            success = model.remove_add(*max_error_input)
-            if success:
-                print(f'Moved points! Using error from batch {max_error_batch["batch_idx"]}')
-                optimizer = Lion(model.parameters(), lr=optimizer.param_groups[0]['lr'])
-            
-            # Clear error tracking after remove_add
-            error_tracking = []
-            batch_since_last_remove_add = 0
-        
         # Log batch loss and accuracy to tensorboard
         if writer is not None and epoch is not None:
             writer.add_scalar('Loss/batch', loss.item(), epoch * len(data_loader) + i)

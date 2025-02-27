@@ -25,7 +25,8 @@ training:
   plateau_min_delta: 1e-1
   plateau_adjustments: 1  # Number of remove_add operations to perform during plateau recovery
   error_tracking_batches: 5  # Number of batches to track errors before selecting maximum
-
+  adapt: move # largest_error
+  
 generation:
   max_length: 200
   temperature: 0.8

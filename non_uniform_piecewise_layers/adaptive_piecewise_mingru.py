@@ -171,6 +171,23 @@ class MinGRULayer(torch.nn.Module):
             
             return success
 
+    def move_smoothest(self):
+        """
+        Remove the point with the smallest removal error (smoothest point) and insert
+        a new point randomly to the left or right of the point that would cause the
+        largest error when removed for each AdaptivePiecewiseLinear layer in the MinGRU cell.
+        
+        Returns:
+            bool: True if points were successfully moved in all layers, False otherwise.
+        """
+        with torch.no_grad():
+            # Try moving the smoothest point in each layer
+            success = True
+            success &= self.z_layer.move_smoothest()
+            success &= self.h_layer.move_smoothest()
+            
+            return success
+
 
 class MinGRUStack(torch.nn.Module):
     def __init__(self, input_dim, state_dim, out_features, layers, num_points, position_init="uniform"):
@@ -307,6 +324,26 @@ class MinGRUStack(torch.nn.Module):
             B, T, _ = current_x.shape
             current_x_reshaped = current_x.reshape(-1, current_x.size(-1))
             success &= self.output_layer.insert_nearby_point(current_x_reshaped)
+            
+            return success
+
+    def move_smoothest(self):
+        """
+        Remove the point with the smallest removal error (smoothest point) and insert
+        a new point randomly to the left or right of the point that would cause the
+        largest error when removed for each layer in the MinGRU stack.
+        
+        Returns:
+            bool: True if points were successfully moved in all layers, False otherwise.
+        """
+        with torch.no_grad():
+            # Process through GRU layers
+            success = True
+            for layer in self.layers:
+                success &= layer.move_smoothest()
+            
+            # Process output layer
+            success &= self.output_layer.move_smoothest()
             
             return success
 
