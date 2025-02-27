@@ -507,7 +507,7 @@ class AdaptivePiecewiseLinear(nn.Module):
             return candidate_x
 
 
-    def compute_removal_errors(self):
+    def compute_removal_errors(self, weighted: bool=False):
         """
         Compute the error that would occur if each internal point were removed.
         The error is computed by comparing the linear interpolation between
@@ -574,6 +574,14 @@ class AdaptivePiecewiseLinear(nn.Module):
             # Shape: (num_inputs, num_outputs, num_points-2)
             errors = torch.abs(interp_vals - mid_vals)
             
+            # If weighted is True, weight errors by the distance between neighboring points
+            if weighted:
+                # Calculate distance between left and right points
+                # Shape: (num_inputs, num_outputs, num_points-2)
+                distances = torch.abs(right_pos - left_pos)
+                # Weight errors by distances
+                errors = errors * distances
+
             # Set error to 0 for duplicate points to prioritize their removal
             errors = torch.where(duplicate_counts > 1, torch.zeros_like(errors), errors)
 
