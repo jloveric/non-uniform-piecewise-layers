@@ -196,7 +196,7 @@ def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=Non
         
         batch_since_last_remove_add += 1
         
-        if adapt == "largest_error":
+        if adapt == "global_error":
             # Calculate error for this batch
             with torch.no_grad():
                 B, T, V = output.shape
@@ -332,7 +332,8 @@ def main(cfg: DictConfig):
             remove_add_every_n_batches=cfg.training.remove_add_every_n_batches,
             plateau_mode=plateau_mode,
             plateau_adjustments=cfg.training.plateau_adjustments,
-            error_tracking_batches=cfg.training.error_tracking_batches
+            error_tracking_batches=cfg.training.error_tracking_batches,
+            adapt=cfg.training.adapt
         )
         
         plateau_mode = False
