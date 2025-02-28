@@ -228,7 +228,7 @@ def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=Non
             (plateau_mode and i in adjustment_points) or
             (not plateau_mode and batch_since_last_remove_add >= remove_add_every_n_batches)
         )
-        if adapt=="largest_error":
+        if adapt=="global_error":
             # Call remove_add if conditions are met
             if should_remove_add and error_tracking:
                 # Find the maximum error across all tracked batches
@@ -243,12 +243,15 @@ def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=Non
                 # Clear error tracking after remove_add
                 error_tracking = []
                 batch_since_last_remove_add = 0
-        else:
+        elif adapt=="move":
             if batch_since_last_remove_add >= remove_add_every_n_batches:
                 model.move_smoothest()
                 optimizer = Lion(model.parameters(), lr=optimizer.param_groups[0]['lr'])
                 batch_since_last_remove_add = 0
-
+        elif adapt==None:
+            pass
+        else:
+            raise ValueError(f"Adaptation {adapt} not recognized")
             
         # Log batch loss and accuracy to tensorboard
         if writer is not None and epoch is not None:
