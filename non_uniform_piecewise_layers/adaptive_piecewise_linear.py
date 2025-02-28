@@ -507,7 +507,7 @@ class AdaptivePiecewiseLinear(nn.Module):
             return candidate_x
 
 
-    def compute_removal_errors(self, weighted: bool=False):
+    def compute_removal_errors(self, weighted: bool=True):
         """
         Compute the error that would occur if each internal point were removed.
         The error is computed by comparing the linear interpolation between
@@ -588,7 +588,7 @@ class AdaptivePiecewiseLinear(nn.Module):
             return errors, indices
         
 
-    def remove_smoothest_point(self):
+    def remove_smoothest_point(self, weighted: bool=True):
         """
         Remove the point with the smallest removal error from each input-output pair.
         This point represents where the function is most linear (smoothest).
@@ -600,7 +600,7 @@ class AdaptivePiecewiseLinear(nn.Module):
         """
         with torch.no_grad():
             # Get removal errors and indices
-            errors, indices = self.compute_removal_errors()
+            errors, indices = self.compute_removal_errors(weighted=weighted)
 
             # If we have no removable points, return False
             if errors.numel() == 0:
@@ -653,7 +653,7 @@ class AdaptivePiecewiseLinear(nn.Module):
             self.num_points = new_num_points
             return True
 
-    def remove_add(self, point):
+    def remove_add(self, point, weighted:bool=False):
         """
         Maintains a constant number of points by first removing the smoothest points
         (where the function is most linear) and then adding a point at the specified
@@ -669,7 +669,7 @@ class AdaptivePiecewiseLinear(nn.Module):
         """
 
         # First remove the smoothest points
-        if not self.remove_smoothest_point():
+        if not self.remove_smoothest_point(weighted=weighted):
             return False
 
         # Then add point at the specified location
@@ -678,7 +678,7 @@ class AdaptivePiecewiseLinear(nn.Module):
 
         return True
 
-    def move_smoothest(self):
+    def move_smoothest(self,weighted:bool=True):
         """
         Remove the point with the smallest removal error (smoothest point) and insert
         a new point randomly to the left or right of the point that would cause the
@@ -692,7 +692,7 @@ class AdaptivePiecewiseLinear(nn.Module):
         """
         with torch.no_grad():
             # Get removal errors and indices
-            errors, indices = self.compute_removal_errors()
+            errors, indices = self.compute_removal_errors(weighted=weighted)
             
             # If we have no removable points, return False
             if errors.numel() == 0:

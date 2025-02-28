@@ -157,7 +157,7 @@ class AdaptivePiecewiseMLP(nn.Module):
         
         return success
 
-    def move_smoothest(self):
+    def move_smoothest(self,weighted:bool=True):
         """
         For each layer in the MLP, remove the point with the smallest removal error (smoothest point)
         and insert a new point randomly to the left or right of the point that would cause the
@@ -170,7 +170,7 @@ class AdaptivePiecewiseMLP(nn.Module):
             # Try moving the smoothest point in each layer
             success = True
             for layer in self.layers:
-                success_ = layer.move_smoothest()
+                success_ = layer.move_smoothest(weighted=weighted)
                 if not success_:
                     success = False
         

@@ -171,7 +171,7 @@ class MinGRULayer(torch.nn.Module):
             
             return success
 
-    def move_smoothest(self):
+    def move_smoothest(self, weighted:bool=True):
         """
         Remove the point with the smallest removal error (smoothest point) and insert
         a new point randomly to the left or right of the point that would cause the
@@ -183,8 +183,8 @@ class MinGRULayer(torch.nn.Module):
         with torch.no_grad():
             # Try moving the smoothest point in each layer
             success = True
-            success &= self.z_layer.move_smoothest()
-            success &= self.h_layer.move_smoothest()
+            success &= self.z_layer.move_smoothest(weighted=weighted)
+            success &= self.h_layer.move_smoothest(weighted=weighted)
             
             return success
 
@@ -327,7 +327,7 @@ class MinGRUStack(torch.nn.Module):
             
             return success
 
-    def move_smoothest(self):
+    def move_smoothest(self, weighted:bool=True):
         """
         Remove the point with the smallest removal error (smoothest point) and insert
         a new point randomly to the left or right of the point that would cause the
@@ -340,10 +340,10 @@ class MinGRUStack(torch.nn.Module):
             # Process through GRU layers
             success = True
             for layer in self.layers:
-                success &= layer.move_smoothest()
+                success &= layer.move_smoothest(weighted=weighted)
             
             # Process output layer
-            success &= self.output_layer.move_smoothest()
+            success &= self.output_layer.move_smoothest(weighted=weighted)
             
             return success
 
