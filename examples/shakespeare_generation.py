@@ -335,7 +335,9 @@ def main(cfg: DictConfig):
             error_tracking_batches=cfg.training.error_tracking_batches
         )
         
+        plateau_mode = False
         # Check for plateaus
+        """
         loss_plateaued = loss_plateau_detector.update(loss)
         
         if loss_plateaued:
@@ -346,7 +348,8 @@ def main(cfg: DictConfig):
             if plateau_mode:
                 logger.info(f"Exiting plateau recovery mode at epoch {epoch}.")
             plateau_mode = False
-        
+        """
+
         # Generate sample text with different temperatures
         if epoch % cfg.training.sample_every == 0:
             model.eval()
