@@ -174,13 +174,21 @@ def main(cfg: DictConfig):
         losses.append(loss.item())
         epochs.append(epoch)
         
-        error = torch.abs(predictions-batched_out)
+        if cfg.training.adapt == "global_error":
+            error = torch.abs(predictions-batched_out)
 
-        new_value = largest_error(error, inputs)
-        if new_value is not None:
-            success = model.remove_add(new_value)
+            new_value = largest_error(error, inputs)
+            if new_value is not None:
+                success = model.remove_add(new_value)
+                optimizer = generate_optimizer(model.parameters(), cfg.training.learning_rate)
+        elif cfg.training.adapt=="move" :
+            success = model.move_smoothest(weighted=cfg.training.weighted)
             optimizer = generate_optimizer(model.parameters(), cfg.training.learning_rate)
-        
+        elif cfg.training.adapt==None:
+            pass #No adaptation
+        else:
+            raise ValueError(f'adapt {cfg.training.adapt} not recognized')
+
         # Save progress plot at specified intervals
         if epoch % cfg.visualization.plot_interval == 0:
             # Save progress plot and add to GIF

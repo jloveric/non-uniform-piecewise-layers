@@ -119,7 +119,7 @@ def main(cfg: DictConfig):
         optimizer.step()
         
         if epoch % cfg.training.refine_every_n_epochs==0:
-            if cfg.training.adapt == "largest_error":
+            if cfg.training.adapt == "global_error":
                 # Call remove_add after each epoch
                 error = torch.abs(y_pred-y)
                 new_value = largest_error(error, x)
