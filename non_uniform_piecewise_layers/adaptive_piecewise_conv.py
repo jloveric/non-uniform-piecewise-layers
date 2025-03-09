@@ -88,6 +88,22 @@ class AdaptivePiecewiseConv2d(nn.Module):
         
         return output
     
+    def move_smoothest(self, weighted:bool=True):
+        """
+        Remove the point with the smallest removal error (smoothest point) and insert
+        a new point randomly to the left or right of the point that would cause the
+        largest error when removed for each AdaptivePiecewiseLinear layer in the MinGRU cell.
+        
+        Returns:
+            bool: True if points were successfully moved in all layers, False otherwise.
+        """
+        with torch.no_grad():
+            # Try moving the smoothest point in each layer
+            success = self.piecewise.move_smoothest(weighted=weighted)
+            
+            return success
+
+
     def insert_points(self, x):
         """Insert points based on input x"""
         # Extract patches like in forward pass

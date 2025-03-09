@@ -39,6 +39,12 @@ class AdaptiveConvNet(nn.Module):
         x = self.fc1(x)
         return x
 
+    def move_smoothest(self, weighted:bool=True):
+        success = True
+        with torch.no_grad():
+            success = self.conv1.move_smoothest(weighted=weighted)
+            success = success & self.conv2.move_smoothest(weighted=weighted)
+
     def adapt_layers(self, x, y, y_pred, max_points):
         """Adapt the convolutional layers based on prediction errors
         
