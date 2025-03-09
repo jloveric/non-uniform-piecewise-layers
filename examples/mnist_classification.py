@@ -136,16 +136,24 @@ def train(model, train_loader, test_loader, epochs, device, learning_rate, max_p
                 print(f'Epoch {epoch+1}, Batch {batch_idx}, Loss: {loss.item():.4f}')
                 print(f'Conv1 points: {model.conv1.piecewise.positions.shape[-1]}, Conv2 points: {model.conv2.piecewise.positions.shape[-1]}')
         
+            #model.move_smoothest(weighted=True)
+            model.move_smoothest(weighted=True)
+            optimizer = generate_optimizer(model.parameters(), learning_rate)
+
+
         # Calculate average loss for the epoch
         epoch_loss = running_loss / len(train_loader)
         train_losses.append(epoch_loss)
         
         # Only adapt points after each epoch
         if epoch > 0:  # Skip first epoch to allow initial convergence
-            _, predicted = torch.max(output.data, 1)
-            errors = (predicted != target).float()
-            model.adapt_layers(data, target, output, max_points)
-            optimizer = generate_optimizer(model.parameters(), learning_rate)
+            pass
+            #_, predicted = torch.max(output.data, 1)
+            #errors = (predicted != target).float()
+            
+            #model.adapt_layers(data, target, output, max_points)
+            #model.move_smoothest(weighted=True)
+            #optimizer = generate_optimizer(model.parameters(), learning_rate)
         
         # Evaluate on test set
         model.eval()
@@ -196,7 +204,8 @@ def plot_results(train_losses, test_accuracies, save_dir):
 @click.option('--device', default='cuda', help='Device to use (cuda or cpu)')
 @click.option('--max-points', default=20, help='Maximum number of points per layer')
 @click.option('--adapt-frequency', default=100, help='How often to adapt layers (in batches)')
-def main(epochs, batch_size, learning_rate, device, max_points, adapt_frequency):
+@click.option('--num-points',default=20, help='number of points in in out pair')
+def main(epochs, batch_size, learning_rate, device, max_points, adapt_frequency, num_points):
     """Train an adaptive convolutional network on MNIST"""
     if not torch.cuda.is_available() and device == 'cuda':
         print("CUDA not available, using CPU instead")
@@ -216,7 +225,7 @@ def main(epochs, batch_size, learning_rate, device, max_points, adapt_frequency)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     
     # Create model
-    model = AdaptiveConvNet().to(device)
+    model = AdaptiveConvNet(num_points=num_points).to(device)
     
     # Train the model
     train_losses, test_accuracies = train(
