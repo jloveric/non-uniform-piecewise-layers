@@ -15,6 +15,7 @@ import torch.nn.functional as F
 from non_uniform_piecewise_layers.utils import largest_error
 from torch.utils.tensorboard import SummaryWriter
 import logging
+import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +126,7 @@ def train(model, train_loader, test_loader, epochs, device, learning_rate, max_p
         model.train()
         running_loss = 0.0
         
-        for batch_idx, (data, target) in enumerate(train_loader):
+        for batch_idx, (data, target) in tqdm.tqdm(enumerate(train_loader)):
             data, target = data.to(device), target.to(device)
             optimizer.zero_grad()
             
@@ -226,6 +227,9 @@ def main(cfg: DictConfig):
     logger.info("\nConfiguration:")
     logger.info(OmegaConf.to_yaml(cfg))
     
+    # Get the project root directory (for data storage)
+    project_root = hydra.utils.get_original_cwd()
+    
     # Extract configuration parameters
     epochs = cfg.epochs
     batch_size = cfg.batch_size
@@ -251,8 +255,12 @@ def main(cfg: DictConfig):
         transforms.Normalize((0.1307,), (0.3081,))
     ])
     
-    train_dataset = datasets.MNIST('data', train=True, download=True, transform=transform)
-    test_dataset = datasets.MNIST('data', train=False, transform=transform)
+    # Store MNIST data in the project root directory to avoid re-downloading
+    data_dir = os.path.join(project_root, 'data')
+    logger.info(f"Using MNIST data directory: {data_dir}")
+    
+    train_dataset = datasets.MNIST(data_dir, train=True, download=True, transform=transform)
+    test_dataset = datasets.MNIST(data_dir, train=False, transform=transform)
     
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
