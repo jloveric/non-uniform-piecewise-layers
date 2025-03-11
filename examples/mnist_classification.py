@@ -8,9 +8,15 @@ import os
 import numpy as np
 from non_uniform_piecewise_layers import AdaptivePiecewiseConv2d
 from lion_pytorch import Lion
-import click
+import hydra
+from hydra.core.hydra_config import HydraConfig
+from omegaconf import DictConfig, OmegaConf
 import torch.nn.functional as F
 from non_uniform_piecewise_layers.utils import largest_error
+from torch.utils.tensorboard import SummaryWriter
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Set random seed for reproducibility
 torch.manual_seed(42)
@@ -107,12 +113,13 @@ def generate_optimizer(parameters, learning_rate):
     """Generate the optimizer for training"""
     return Lion(parameters, lr=learning_rate)
 
-def train(model, train_loader, test_loader, epochs, device, learning_rate, max_points, adapt_frequency):
+def train(model, train_loader, test_loader, epochs, device, learning_rate, max_points, adapt_frequency, writer=None, log_interval=100):
     criterion = nn.CrossEntropyLoss()
     optimizer = generate_optimizer(model.parameters(), learning_rate)
     
     train_losses = []
     test_accuracies = []
+    global_step = 0
     
     for epoch in range(epochs):
         model.train()
@@ -132,9 +139,16 @@ def train(model, train_loader, test_loader, epochs, device, learning_rate, max_p
             
             running_loss += loss.item()
             
+            # Log to TensorBoard
+            if writer is not None and batch_idx % log_interval == 0:
+                writer.add_scalar('training/batch_loss', loss.item(), global_step)
+                writer.add_scalar('model/conv1_points', model.conv1.piecewise.positions.shape[-1], global_step)
+                writer.add_scalar('model/conv2_points', model.conv2.piecewise.positions.shape[-1], global_step)
+                global_step += 1
+            
             if batch_idx % 100 == 0:
-                print(f'Epoch {epoch+1}, Batch {batch_idx}, Loss: {loss.item():.4f}')
-                print(f'Conv1 points: {model.conv1.piecewise.positions.shape[-1]}, Conv2 points: {model.conv2.piecewise.positions.shape[-1]}')
+                logger.info(f'Epoch {epoch+1}, Batch {batch_idx}, Loss: {loss.item():.4f}')
+                logger.info(f'Conv1 points: {model.conv1.piecewise.positions.shape[-1]}, Conv2 points: {model.conv2.piecewise.positions.shape[-1]}')
         
             #model.move_smoothest(weighted=True)
             model.move_smoothest(weighted=True)
@@ -169,7 +183,13 @@ def train(model, train_loader, test_loader, epochs, device, learning_rate, max_p
         
         accuracy = 100 * correct / total
         test_accuracies.append(accuracy)
-        print(f'Epoch {epoch+1}, Loss: {epoch_loss:.4f}, Test Accuracy: {accuracy:.2f}%')
+        
+        # Log epoch metrics to TensorBoard
+        if writer is not None:
+            writer.add_scalar('training/epoch_loss', epoch_loss, epoch)
+            writer.add_scalar('evaluation/accuracy', accuracy, epoch)
+        
+        logger.info(f'Epoch {epoch+1}, Loss: {epoch_loss:.4f}, Test Accuracy: {accuracy:.2f}%')
     
     return train_losses, test_accuracies
 
@@ -197,16 +217,29 @@ def plot_results(train_losses, test_accuracies, save_dir):
     plt.savefig(os.path.join(save_dir, 'mnist_training_results.png'))
     plt.close()
 
-@click.command()
-@click.option('--epochs', default=10, help='Number of epochs to train')
-@click.option('--batch-size', default=64, help='Batch size for training')
-@click.option('--learning-rate', default=1e-3, help='Learning rate')
-@click.option('--device', default='cuda', help='Device to use (cuda or cpu)')
-@click.option('--max-points', default=20, help='Maximum number of points per layer')
-@click.option('--adapt-frequency', default=100, help='How often to adapt layers (in batches)')
-@click.option('--num-points',default=20, help='number of points in in out pair')
-def main(epochs, batch_size, learning_rate, device, max_points, adapt_frequency, num_points):
+@hydra.main(version_base=None, config_path="config", config_name="mnist_classification")
+def main(cfg: DictConfig):
     """Train an adaptive convolutional network on MNIST"""
+    # Log Hydra configuration information
+    logger.info(f"Working directory: {os.getcwd()}")
+    logger.info(f"Output directory: {HydraConfig.get().run.dir}")
+    logger.info("\nConfiguration:")
+    logger.info(OmegaConf.to_yaml(cfg))
+    
+    # Extract configuration parameters
+    epochs = cfg.epochs
+    batch_size = cfg.batch_size
+    learning_rate = cfg.learning_rate
+    device = cfg.device
+    max_points = cfg.max_points
+    adapt_frequency = cfg.adapt_frequency
+    num_points = cfg.num_points
+    
+    # Set up TensorBoard writer
+    writer = None
+    if cfg.tensorboard.enabled:
+        writer = SummaryWriter()
+        logger.info(f"TensorBoard logs will be saved to {writer.log_dir}")
     if not torch.cuda.is_available() and device == 'cuda':
         print("CUDA not available, using CPU instead")
         device = 'cpu'
@@ -236,11 +269,18 @@ def main(epochs, batch_size, learning_rate, device, max_points, adapt_frequency,
         device=device,
         learning_rate=learning_rate,
         max_points=max_points,
-        adapt_frequency=adapt_frequency
+        adapt_frequency=adapt_frequency,
+        writer=writer,
+        log_interval=cfg.tensorboard.log_interval
     )
     
     # Plot results
-    plot_results(train_losses, test_accuracies, 'results')
+    plot_results(train_losses, test_accuracies, '.')
+    
+    # Close TensorBoard writer
+    if writer is not None:
+        writer.close()
+        logger.info("TensorBoard writer closed successfully")
 
 if __name__ == '__main__':
     main()

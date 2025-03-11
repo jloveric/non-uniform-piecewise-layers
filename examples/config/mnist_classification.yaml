@@ -1,0 +1,27 @@
+# MNIST Classification Configuration
+
+defaults:
+  - _self_
+
+# Configure Hydra
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: true
+
+# Training parameters
+epochs: 10
+batch_size: 64
+learning_rate: 1e-3
+device: cuda  # 'cuda' or 'cpu'
+
+# Model parameters
+max_points: 20
+adapt_frequency: 100
+num_points: 20
+
+# TensorBoard settings
+tensorboard:
+  enabled: true
+  log_interval: 10  # Log metrics every N batches
