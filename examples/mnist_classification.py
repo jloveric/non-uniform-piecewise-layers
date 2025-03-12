@@ -69,7 +69,7 @@ def train(model, train_loader, test_loader, epochs, device, learning_rate, max_p
         running_loss = 0.0
         
         for batch_idx, (data, target) in tqdm.tqdm(enumerate(train_loader)):
-            data, target = data.to(device), target.to(device)
+            #data, target = data.to(device), target.to(device)
             optimizer.zero_grad()
             
             # Forward pass
@@ -108,7 +108,7 @@ def train(model, train_loader, test_loader, epochs, device, learning_rate, max_p
         total = 0
         with torch.no_grad():
             for data, target in test_loader:
-                data, target = data.to(device), target.to(device)
+                #data, target = data.to(device), target.to(device)
                 output = model(data)
                 _, predicted = torch.max(output.data, 1)
                 total += target.size(0)
@@ -196,6 +196,11 @@ def main(cfg: DictConfig):
     train_dataset = datasets.MNIST(data_dir, train=True, download=True, transform=transform)
     test_dataset = datasets.MNIST(data_dir, train=False, transform=transform)
     
+    train_dataset.data = train_dataset.data.to(device)
+    train_dataset.targets = train_dataset.targets.to(device)
+
+    test_dataset.data = test_dataset.data.to(device)
+    test_dataset.targets = test_dataset.targets.to(device)
     # Use only a fraction of the training data if specified
     if training_fraction < 1.0:
         # Calculate the number of samples to use

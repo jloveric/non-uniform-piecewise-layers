@@ -14,7 +14,7 @@ hydra:
 epochs: 10
 batch_size: 64
 learning_rate: 1e-3
-device: cuda  # 'cuda' or 'cpu'
+device: cpu  # 'cuda' or 'cpu'
 training_fraction: 1.0  # Fraction of training set to use (0.0-1.0)
 move_nodes: True
 
