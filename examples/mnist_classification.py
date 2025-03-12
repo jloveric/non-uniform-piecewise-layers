@@ -52,69 +52,11 @@ class AdaptiveConvNet(nn.Module):
             success = self.conv1.move_smoothest(weighted=weighted)
             success = success & self.conv2.move_smoothest(weighted=weighted)
 
-    def adapt_layers(self, x, y, y_pred, max_points):
-        """Adapt the convolutional layers based on prediction errors
-        
-        Args:
-            x: Input batch
-            y: Target batch
-            y_pred: Predicted batch
-            max_points: Maximum number of points per layer
-        """
-        # Check if we've reached the maximum number of nodes (20 per layer)
-        if (self.conv1.piecewise.positions.shape[-1] >= max_points or 
-            self.conv2.piecewise.positions.shape[-1] >= max_points):
-            return
-
-        # Find input corresponding to largest error
-        errors = torch.abs(y_pred - y)
-        x_error = largest_error(errors, x)
-        if x_error is not None:
-            # Forward pass to get intermediate activations for the high-error input
-            with torch.no_grad():
-                # For conv1, we want a single 3x3 window where the error is highest
-                # Unfold the input for conv1
-                x1_unfolded = F.unfold(
-                    x_error, 
-                    kernel_size=self.conv1.kernel_size,
-                    padding=self.conv1.padding,
-                    stride=self.conv1.stride
-                )
-                # Reshape to match piecewise layer input shape
-                x1_unfolded = x1_unfolded.transpose(1, 2).contiguous()
-                # Find the window with highest error (using L1 norm)
-                window_errors = torch.abs(x1_unfolded[0]).sum(dim=1)
-                max_window_idx = torch.argmax(window_errors)
-                x1_point = x1_unfolded[0][max_window_idx]
-                
-                if self.conv1.piecewise.positions.shape[-1] < max_points:
-                    self.conv1.insert_nearby_point(x1_point)
-                
-                # Get intermediate activation for conv2
-                x1 = self.conv1(x_error)
-                x1 = self.pool1(x1)
-                
-                # For conv2, the dimensions are different since we're working with feature maps
-                x2_unfolded = F.unfold(
-                    x1,
-                    kernel_size=self.conv2.kernel_size,
-                    padding=self.conv2.padding,
-                    stride=self.conv2.stride
-                )
-                x2_unfolded = x2_unfolded.transpose(1, 2).contiguous()
-                # Find window with highest error
-                window_errors = torch.abs(x2_unfolded[0]).sum(dim=1)
-                max_window_idx = torch.argmax(window_errors)
-                x2_point = x2_unfolded[0][max_window_idx]
-                
-                if self.conv2.piecewise.positions.shape[-1] < max_points:
-                    self.conv2.insert_nearby_point(x2_point)
-
 def generate_optimizer(parameters, learning_rate):
     """Generate the optimizer for training"""
     return Lion(parameters, lr=learning_rate)
 
-def train(model, train_loader, test_loader, epochs, device, learning_rate, max_points, adapt_frequency, writer=None, log_interval=100):
+def train(model, train_loader, test_loader, epochs, device, learning_rate, max_points, adapt_frequency, writer=None, log_interval=100, move_nodes:bool=True):
     criterion = nn.CrossEntropyLoss()
     optimizer = generate_optimizer(model.parameters(), learning_rate)
     
@@ -151,24 +93,14 @@ def train(model, train_loader, test_loader, epochs, device, learning_rate, max_p
                 logger.info(f'Epoch {epoch+1}, Batch {batch_idx}, Loss: {loss.item():.4f}')
                 logger.info(f'Conv1 points: {model.conv1.piecewise.positions.shape[-1]}, Conv2 points: {model.conv2.piecewise.positions.shape[-1]}')
         
-            #model.move_smoothest(weighted=True)
-            model.move_smoothest(weighted=True)
-            optimizer = generate_optimizer(model.parameters(), learning_rate)
+            if move_nodes:
+                model.move_smoothest(weighted=True)
+                optimizer = generate_optimizer(model.parameters(), learning_rate)
 
 
         # Calculate average loss for the epoch
         epoch_loss = running_loss / len(train_loader)
         train_losses.append(epoch_loss)
-        
-        # Only adapt points after each epoch
-        if epoch > 0:  # Skip first epoch to allow initial convergence
-            pass
-            #_, predicted = torch.max(output.data, 1)
-            #errors = (predicted != target).float()
-            
-            #model.adapt_layers(data, target, output, max_points)
-            #model.move_smoothest(weighted=True)
-            #optimizer = generate_optimizer(model.parameters(), learning_rate)
         
         # Evaluate on test set
         model.eval()
@@ -238,6 +170,8 @@ def main(cfg: DictConfig):
     max_points = cfg.max_points
     adapt_frequency = cfg.adapt_frequency
     num_points = cfg.num_points
+    training_fraction = cfg.training_fraction
+    move_nodes=cfg.move_nodes
     
     # Set up TensorBoard writer
     writer = None
@@ -262,6 +196,17 @@ def main(cfg: DictConfig):
     train_dataset = datasets.MNIST(data_dir, train=True, download=True, transform=transform)
     test_dataset = datasets.MNIST(data_dir, train=False, transform=transform)
     
+    # Use only a fraction of the training data if specified
+    if training_fraction < 1.0:
+        # Calculate the number of samples to use
+        num_train_samples = int(len(train_dataset) * training_fraction)
+        # Create a subset of the training data
+        indices = torch.randperm(len(train_dataset))[:num_train_samples]
+        train_dataset = torch.utils.data.Subset(train_dataset, indices)
+        logger.info(f"Using {num_train_samples} training samples ({training_fraction:.2%} of the full dataset)")
+    else:
+        logger.info(f"Using full training dataset with {len(train_dataset)} samples")
+    
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     
@@ -279,7 +224,8 @@ def main(cfg: DictConfig):
         max_points=max_points,
         adapt_frequency=adapt_frequency,
         writer=writer,
-        log_interval=cfg.tensorboard.log_interval
+        log_interval=cfg.tensorboard.log_interval,
+        move_nodes=move_nodes
     )
     
     # Plot results
