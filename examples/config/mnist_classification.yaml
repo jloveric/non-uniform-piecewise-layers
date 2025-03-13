@@ -21,7 +21,7 @@ move_nodes: True
 # Model parameters
 max_points: 20
 adapt_frequency: 100
-num_points: 20
+num_points: 10
 
 # TensorBoard settings
 tensorboard:
