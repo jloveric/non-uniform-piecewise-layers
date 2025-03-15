@@ -60,6 +60,12 @@ The layer consists of the following learnable parameters:
 
 For each input-output pair, the layer learns a separate piecewise linear function defined by `num_points` control points. The forward pass performs efficient linear interpolation between these points.
 
+## Square Wave
+Non default example
+```
+python examples/dynamic_square_wave.py training.adapt=move model.num_points=20 training.refine_every_n_epochs=10 data.num_points=100
+```
+
 ## Shakespeare
 Approaching good results with things like this
 ```
