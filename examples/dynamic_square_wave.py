@@ -72,8 +72,11 @@ def save_progress_plot(model, x, y, epoch, loss, position):
     plt.savefig(f'square_wave_{epoch:03d}.png')
     plt.close()
 
-def generate_optimizer(parameters, learning_rate):
-    return Lion(parameters, lr=learning_rate)
+def generate_optimizer(parameters, learning_rate, name="lion"):
+    if name == "lion":
+        return Lion(parameters, lr=learning_rate)
+    elif name == "sgd":
+        return torch.optim.SGD(parameters, lr=learning_rate)
 
 @hydra.main(version_base=None, config_path="config", config_name="dynamic_square_wave")
 def main(cfg: DictConfig):
@@ -93,7 +96,7 @@ def main(cfg: DictConfig):
         position_range=tuple(cfg.model.position_range)
     )
     
-    optimizer = generate_optimizer(model.parameters(), cfg.training.learning_rate)
+    optimizer = generate_optimizer(model.parameters(), cfg.training.learning_rate, name=cfg.training.optimizer)
     
     # Prepare for creating a GIF
     images = []
@@ -126,11 +129,11 @@ def main(cfg: DictConfig):
                 if new_value is not None:
                     logger.debug(f'New value: {new_value}')
                     model.remove_add(new_value)
-                    optimizer = generate_optimizer(model.parameters(), cfg.training.learning_rate)
+                    optimizer = generate_optimizer(model.parameters(), cfg.training.learning_rate, name=cfg.training.optimizer)
             elif cfg.training.adapt == "move":
                 logger.debug(f'Moving value')
                 model.move_smoothest()
-                optimizer = generate_optimizer(model.parameters(), cfg.training.learning_rate)
+                optimizer = generate_optimizer(model.parameters(), cfg.training.learning_rate, name=cfg.training.optimizer)
 
         # Save progress plot at specified intervals
         if epoch % cfg.visualization.plot_interval == 0:
