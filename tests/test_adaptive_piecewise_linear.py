@@ -85,8 +85,8 @@ def test_compute_removal_errors():
     layer.positions.data = torch.tensor([[[0.0, 0.33, 0.67, 1.0]]])
     layer.values.data = torch.tensor([[[0.0, 0.5, 0.8, 1.0]]])
     
-    # Compute removal errors
-    errors, indices = layer.compute_removal_errors()
+    # Compute removal errors with weighted=False to match expected calculations
+    errors, indices = layer.compute_removal_errors(weighted=False)
     
     # Check shapes
     assert errors.shape == (1, 1, 2), f"Expected error shape (1,1,2), got {errors.shape}"
@@ -221,8 +221,8 @@ def test_compute_removal_errors_3in_2out():
     layer.positions.data = positions
     layer.values.data = values
     
-    # Compute removal errors
-    errors, indices = layer.compute_removal_errors()
+    # Compute removal errors with weighted=False to match expected calculations
+    errors, indices = layer.compute_removal_errors(weighted=False)
     
     # Check shapes
     assert errors.shape == (3, 2, 2), f"Expected error shape (3,2,2), got {errors.shape}"

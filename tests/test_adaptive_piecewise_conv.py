@@ -63,8 +63,8 @@ def test_conv_forward():
     # Output should be smaller due to no padding
     assert y_no_pad.shape == (batch_size, out_channels, expected_size, expected_size)
 
-def test_largest_error():
-    """Test that largest_error returns valid points"""
+def test_move_smoothest():
+    """Test that move_smoothest works correctly"""
     in_channels = 2
     out_channels = 3
     kernel_size = 3
@@ -77,77 +77,62 @@ def test_largest_error():
         num_points=num_points
     )
     
-    # Create batch of inputs
-    B = 2
-    H = 32
-    W = 32
-    x = torch.randn(B, in_channels, H, W)
-    error = torch.ones(B, out_channels, H-kernel_size+1, W-kernel_size+1)
+    # Get initial number of points
+    initial_num_points = conv.piecewise.num_points
     
-    x_error = largest_error(error, x)
+    # Should be able to move points since we have more than 2 points
+    success = conv.move_smoothest()
     
-    assert x_error.shape == (B, in_channels, H, W)  # Should return same shape as input
+    # Number of points should remain the same
+    assert conv.piecewise.num_points == initial_num_points
+    assert success
 
-def test_insert_points():
-    """Test that insert_points adds points correctly"""
-    batch_size = 4
+def test_move_smoothest_edge_case():
+    """Test that move_smoothest handles edge cases correctly"""
     in_channels = 2
-    out_channels = 4
-    height = 8
-    width = 8
+    out_channels = 3
     kernel_size = 3
-    initial_points = 3
+    num_points = 2  # Only 2 points, can't move
     
     conv = AdaptivePiecewiseConv2d(
         in_channels=in_channels,
         out_channels=out_channels,
         kernel_size=kernel_size,
-        num_points=initial_points
+        num_points=num_points
     )
     
-    x = torch.randn(batch_size, in_channels, height, width)
-    initial_num_points = conv.piecewise.num_points
+    # Should not be able to move points when only 2 points exist
+    success = conv.move_smoothest()
     
-    conv.insert_points(x)
+    # Operation should fail
+    assert not success
     
-    # Number of points should increase
-    assert conv.piecewise.num_points > initial_num_points
-    
-    # Shapes should update accordingly
-    assert conv.piecewise.positions.shape[2] == conv.piecewise.num_points
-    assert conv.piecewise.values.shape[2] == conv.piecewise.num_points
+    # Number of points should remain the same
+    assert conv.piecewise.num_points == num_points
 
-def test_insert_nearby_point():
-    """Test that insert_nearby_point adds points correctly"""
-    batch_size = 4
+def test_move_smoothest_weighted():
+    """Test that move_smoothest works with weighted parameter"""
     in_channels = 2
-    out_channels = 4
-    height = 8
-    width = 8
+    out_channels = 3
     kernel_size = 3
-    initial_points = 3
+    num_points = 5
     
     conv = AdaptivePiecewiseConv2d(
         in_channels=in_channels,
         out_channels=out_channels,
         kernel_size=kernel_size,
-        num_points=initial_points
+        num_points=num_points
     )
     
-    x = torch.randn(batch_size, in_channels, height, width)
-    y = conv(x)
-    error = torch.abs(y)  # Use output as mock error
-    x_error = conv.largest_error(error, x)
-    
+    # Get initial number of points
     initial_num_points = conv.piecewise.num_points
-    conv.insert_nearby_point(x_error)
     
-    # Number of points should increase by out_channels (one point per output channel)
-    assert conv.piecewise.num_points == initial_num_points + out_channels
+    # Try with weighted=False
+    success = conv.move_smoothest(weighted=False)
     
-    # Shapes should update accordingly
-    assert conv.piecewise.positions.shape[2] == conv.piecewise.num_points
-    assert conv.piecewise.values.shape[2] == conv.piecewise.num_points
+    # Number of points should remain the same
+    assert conv.piecewise.num_points == initial_num_points
+    assert success
 
 def test_stride():
     """Test that stride parameter works correctly"""
