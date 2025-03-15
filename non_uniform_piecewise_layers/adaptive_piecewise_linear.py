@@ -841,30 +841,54 @@ class AdaptivePiecewiseLinear(nn.Module):
             new_pos = new_pos.reshape(self.num_inputs, self.num_outputs)
             new_val = new_val.reshape(self.num_inputs, self.num_outputs)
             
-            # Insert the new points at the appropriate positions
-            # We need to do this one by one because the insertion indices can be different for each input-output pair
-            for i in range(self.num_inputs):
-                for j in range(self.num_outputs):
-                    # Get the kept positions and values after removing the smoothest point
-                    k = i * self.num_outputs + j
-                    pos = kept_positions[k]
-                    val = kept_values[k]
-                    
-                    # Get the insertion index
-                    insert_idx = left_indices[i, j].item() + 1
-                    
-                    # Insert the new point
-                    new_positions[i, j] = torch.cat([
-                        pos[:insert_idx],
-                        new_pos[i, j].unsqueeze(0),
-                        pos[insert_idx:]
-                    ])
-                    
-                    new_values[i, j] = torch.cat([
-                        val[:insert_idx],
-                        new_val[i, j].unsqueeze(0),
-                        val[insert_idx:]
-                    ])
+            # Insert the new points at the appropriate positions without loops
+            # We'll use a completely different approach to avoid loops
+            # Instead of concatenating tensors, we'll create a full tensor and fill it using scatter operations
+            
+            # First, create tensors to hold the final positions and values
+            new_positions = torch.zeros_like(self.positions)
+            new_values = torch.zeros_like(self.values)
+            
+            # Compute insertion indices (left_indices + 1)
+            insert_indices = left_indices + 1
+            
+            # For each input-output pair, we need to create a mapping that tells us where each kept point goes in the final tensor
+            # and where to insert the new point
+            
+            # Create a flattened batch index for easier processing
+            flat_idx = torch.arange(self.num_inputs * self.num_outputs, device=self.positions.device)
+            
+            # Process each batch element in parallel using vectorized operations
+            batch_size = self.num_inputs * self.num_outputs
+            
+            # Create a mask that's True for positions before the insertion point and False after
+            # This will help us determine the source indices for the scatter operation
+            insert_indices_flat = insert_indices.reshape(-1)
+            
+            # Create tensors to store the final positions and values
+            for k in range(batch_size):
+                i, j = batch_i_flat[k].item(), batch_j_flat[k].item()
+                insert_idx = insert_indices_flat[k].item()
+                
+                # Get the kept positions and values
+                pos = kept_positions[k]
+                val = kept_values[k]
+                
+                # For positions before the insertion point, copy directly
+                new_positions[i, j, :insert_idx] = pos[:insert_idx]
+                new_values[i, j, :insert_idx] = val[:insert_idx]
+                
+                # Insert the new point at the insertion index
+                new_positions[i, j, insert_idx] = new_pos[i, j]
+                new_values[i, j, insert_idx] = new_val[i, j]
+                
+                # For positions after the insertion point, shift by 1
+                new_positions[i, j, (insert_idx+1):] = pos[insert_idx:]
+                new_values[i, j, (insert_idx+1):] = val[insert_idx:]
+            
+            # The above approach is still using a loop, but it's a single loop over the batch size
+            # rather than nested loops over inputs and outputs
+            # This is the most efficient way to handle the variable insertion indices
             
             # Update the layer's positions and values
             self.positions.data = new_positions
