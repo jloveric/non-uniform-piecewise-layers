@@ -120,6 +120,7 @@ def train(model, train_loader, test_loader, epochs, device, learning_rate, max_p
     
     train_losses = []
     test_accuracies = []
+    train_accuracies = []
     global_step = 0
     training_step = 0
     
@@ -141,9 +142,16 @@ def train(model, train_loader, test_loader, epochs, device, learning_rate, max_p
             
             running_loss += loss.item()
             
+            # Calculate batch training accuracy
+            _, predicted = torch.max(output.data, 1)
+            batch_total = target.size(0)
+            batch_correct = (predicted == target).sum().item()
+            batch_accuracy = 100 * batch_correct / batch_total
+            
             # Log to TensorBoard
             if writer is not None and batch_idx % log_interval == 0:
                 writer.add_scalar('training/batch_loss', loss.item(), global_step)
+                writer.add_scalar('training/batch_accuracy', batch_accuracy, global_step)
                 
                 # Log model-specific metrics
                 if isinstance(model, AdaptiveConvNet):
@@ -154,10 +162,6 @@ def train(model, train_loader, test_loader, epochs, device, learning_rate, max_p
                 
                 global_step += 1
             
-            #if batch_idx % 100 == 0:
-            #    logger.info(f'Epoch {epoch+1}, Batch {batch_idx}, Loss: {loss.item():.4f}')
-            #    logger.info(f'Conv1 points: {model.conv1.piecewise.positions.shape[-1]}, Conv2 points: {model.conv2.piecewise.positions.shape[-1]}')
-        
             if move_nodes and (training_step%adapt_frequency)==0:
                 model.move_smoothest(weighted=True)
                 optimizer = generate_optimizer(model.parameters(), learning_rate)
@@ -171,27 +175,42 @@ def train(model, train_loader, test_loader, epochs, device, learning_rate, max_p
         
         # Evaluate on test set
         model.eval()
-        correct = 0
-        total = 0
+        test_correct = 0
+        test_total = 0
         with torch.no_grad():
             for data, target in test_loader:
                 data, target = data.to(device), target.to(device)
                 output = model(data)
                 _, predicted = torch.max(output.data, 1)
-                total += target.size(0)
-                correct += (predicted == target).sum().item()
+                test_total += target.size(0)
+                test_correct += (predicted == target).sum().item()
         
-        accuracy = 100 * correct / total
-        test_accuracies.append(accuracy)
+        test_accuracy = 100 * test_correct / test_total
+        test_accuracies.append(test_accuracy)
+        
+        # Evaluate on train set
+        train_correct = 0
+        train_total = 0
+        with torch.no_grad():
+            for data, target in train_loader:
+                data, target = data.to(device), target.to(device)
+                output = model(data)
+                _, predicted = torch.max(output.data, 1)
+                train_total += target.size(0)
+                train_correct += (predicted == target).sum().item()
+        
+        train_accuracy = 100 * train_correct / train_total
+        train_accuracies.append(train_accuracy)
         
         # Log epoch metrics to TensorBoard
         if writer is not None:
             writer.add_scalar('training/epoch_loss', epoch_loss, epoch)
-            writer.add_scalar('evaluation/accuracy', accuracy, epoch)
+            writer.add_scalar('evaluation/test_accuracy', test_accuracy, epoch)
+            writer.add_scalar('evaluation/train_accuracy', train_accuracy, epoch)
         
-        logger.info(f'Epoch {epoch+1}, Loss: {epoch_loss:.4f}, Test Accuracy: {accuracy:.2f}%')
+        logger.info(f'Epoch {epoch+1}, Loss: {epoch_loss:.4f}, Test Accuracy: {test_accuracy:.2f}%, Train Accuracy: {train_accuracy:.2f}%')
     
-    return train_losses, test_accuracies
+    return train_losses, test_accuracies, train_accuracies
 
 def plot_results(train_losses, test_accuracies, save_dir):
     # Create save directory if it doesn't exist
@@ -246,6 +265,22 @@ def main(cfg: DictConfig):
     if cfg.tensorboard.enabled:
         writer = SummaryWriter()
         logger.info(f"TensorBoard logs will be saved to {writer.log_dir}")
+        
+        # Prepare hyperparameters dictionary for TensorBoard
+        # Convert all values to strings as TensorBoard expects
+        hparams = {
+            'epochs': str(epochs),
+            'batch_size': str(batch_size),
+            'learning_rate': str(learning_rate),
+            'max_points': str(max_points),
+            'adapt_frequency': str(adapt_frequency),
+            'num_points': str(num_points),
+            'training_fraction': str(training_fraction),
+            'move_nodes': str(move_nodes),
+            'model_type': model_type
+        }
+        # We'll add metrics after training completes
+        
     print(f"Using device: {device}")
 
     # Create data loaders
@@ -291,7 +326,7 @@ def main(cfg: DictConfig):
         model = AdaptiveConvNet(num_points=num_points).to(device)
     
     # Train the model
-    train_losses, test_accuracies = train(
+    train_losses, test_accuracies, train_accuracies = train(
         model, 
         train_loader, 
         test_loader, 
@@ -308,8 +343,40 @@ def main(cfg: DictConfig):
     # Plot results
     plot_results(train_losses, test_accuracies, '.')
     
-    # Close TensorBoard writer
+    # Log final metrics with hyperparameters to TensorBoard
     if writer is not None:
+        # Get the final metrics
+        final_test_accuracy = test_accuracies[-1] if test_accuracies else 0
+        final_train_accuracy = train_accuracies[-1] if train_accuracies else 0
+        final_loss = train_losses[-1] if train_losses else 0
+        
+        # Create metric dictionaries for TensorBoard
+        # TensorBoard requires metrics to be in a specific format
+        metric_dict = {
+            'hparam/test_accuracy': final_test_accuracy,
+            'hparam/train_accuracy': final_train_accuracy,
+            'hparam/loss': final_loss
+        }
+        
+        # Log metrics individually first (required for hparams visualization)
+        for metric_name, metric_value in metric_dict.items():
+            writer.add_scalar(metric_name, metric_value)
+        
+        # Create a unique run name for this experiment
+        run_name = f"{model_type}_np{num_points}_lr{learning_rate}"
+        
+        # Create a separate experiment directory for this run
+        exp_dir = os.path.join(writer.log_dir, run_name)
+        os.makedirs(exp_dir, exist_ok=True)
+        
+        # Create a new writer for the experiment directory
+        exp_writer = SummaryWriter(log_dir=exp_dir)
+        
+        # Log hyperparameters and metrics together
+        exp_writer.add_hparams(hparams, metric_dict)
+        exp_writer.close()
+        
+        # Close main TensorBoard writer
         writer.close()
         logger.info("TensorBoard writer closed successfully")
 
