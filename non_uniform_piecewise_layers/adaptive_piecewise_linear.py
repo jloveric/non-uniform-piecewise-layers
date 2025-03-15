@@ -841,9 +841,8 @@ class AdaptivePiecewiseLinear(nn.Module):
             new_pos = new_pos.reshape(self.num_inputs, self.num_outputs)
             new_val = new_val.reshape(self.num_inputs, self.num_outputs)
             
-            # Insert the new points at the appropriate positions without loops
-            # We'll use a completely different approach to avoid loops
-            # Instead of concatenating tensors, we'll create a full tensor and fill it using scatter operations
+            # Insert the new points at the appropriate positions using fully vectorized scatter operations
+            # This approach completely eliminates all loops
             
             # First, create tensors to hold the final positions and values
             new_positions = torch.zeros_like(self.positions)
@@ -852,46 +851,116 @@ class AdaptivePiecewiseLinear(nn.Module):
             # Compute insertion indices (left_indices + 1)
             insert_indices = left_indices + 1
             
-            # For each input-output pair, we need to create a mapping that tells us where each kept point goes in the final tensor
-            # and where to insert the new point
+            # We need to create index tensors for the scatter operations
+            # For each input-output pair, we need three sets of indices:
+            # 1. Indices for points before the insertion point (copy directly)
+            # 2. Index for the new point (insert at insert_index)
+            # 3. Indices for points after the insertion point (shift by 1)
             
-            # Create a flattened batch index for easier processing
-            flat_idx = torch.arange(self.num_inputs * self.num_outputs, device=self.positions.device)
+            # Create batch indices for the scatter operation
+            batch_i_expanded = batch_i.unsqueeze(-1).expand(-1, -1, self.num_points)
+            batch_j_expanded = batch_j.unsqueeze(-1).expand(-1, -1, self.num_points)
             
-            # Process each batch element in parallel using vectorized operations
-            batch_size = self.num_inputs * self.num_outputs
+            # Create point indices for the scatter operation
+            point_indices = torch.arange(self.num_points, device=self.positions.device)
+            point_indices = point_indices.view(1, 1, -1).expand(self.num_inputs, self.num_outputs, -1)
             
-            # Create a mask that's True for positions before the insertion point and False after
-            # This will help us determine the source indices for the scatter operation
+            # Create a mask for points that should be shifted (those after the insertion point)
+            insert_indices_expanded = insert_indices.unsqueeze(-1).expand(-1, -1, self.num_points)
+            shift_mask = point_indices >= insert_indices_expanded
+            
+            # Create the destination indices tensor
+            # For points before insertion: keep the same index
+            # For the insertion point: use the insertion index
+            # For points after insertion: shift by 1
+            dest_indices = point_indices.clone()
+            dest_indices[shift_mask] += 1
+            
+            # We need to handle the insertion of new points separately
+            # First, handle all the kept points (all points except the ones being removed)
+            
+            # Reshape tensors for easier indexing
+            batch_i_flat = batch_i.reshape(-1)
+            batch_j_flat = batch_j.reshape(-1)
             insert_indices_flat = insert_indices.reshape(-1)
             
-            # Create tensors to store the final positions and values
-            for k in range(batch_size):
-                i, j = batch_i_flat[k].item(), batch_j_flat[k].item()
-                insert_idx = insert_indices_flat[k].item()
-                
-                # Get the kept positions and values
-                pos = kept_positions[k]
-                val = kept_values[k]
-                
-                # For positions before the insertion point, copy directly
-                new_positions[i, j, :insert_idx] = pos[:insert_idx]
-                new_values[i, j, :insert_idx] = val[:insert_idx]
-                
-                # Insert the new point at the insertion index
-                new_positions[i, j, insert_idx] = new_pos[i, j]
-                new_values[i, j, insert_idx] = new_val[i, j]
-                
-                # For positions after the insertion point, shift by 1
-                new_positions[i, j, (insert_idx+1):] = pos[insert_idx:]
-                new_values[i, j, (insert_idx+1):] = val[insert_idx:]
+            # For each input-output pair, we need to:
+            # 1. Get the kept positions and values
+            # 2. Create source and destination indices for the scatter operation
+            # 3. Use scatter to place the values in the correct positions
             
-            # The above approach is still using a loop, but it's a single loop over the batch size
-            # rather than nested loops over inputs and outputs
-            # This is the most efficient way to handle the variable insertion indices
+            # We need to create a new tensor with one more point than the current tensor
+            # since we're removing one point and adding a new one
+            new_positions = torch.zeros(self.num_inputs, self.num_outputs, self.num_points, device=self.positions.device)
+            new_values = torch.zeros(self.num_inputs, self.num_outputs, self.num_points, device=self.values.device)
+            
+            # Fully vectorized approach using gather and scatter operations
+            # Create index tensors for scatter operations
+            batch_size = self.num_inputs * self.num_outputs
+            
+            # Create batch indices for scatter
+            batch_indices = torch.arange(batch_size, device=self.positions.device)
+            
+            # Create source indices for each part of the operation
+            # 1. For points before insertion: use original indices
+            # 2. For points after insertion: shift indices by 1
+            
+            # Create a mask tensor to identify which points are before/after insertion
+            # First, create a range tensor [0, 1, 2, ..., num_points-2] for each batch item
+            src_indices = torch.arange(self.num_points-1, device=self.positions.device).unsqueeze(0).expand(batch_size, -1)
+            
+            # Create insertion indices for each batch item
+            insert_indices_expanded = insert_indices_flat.unsqueeze(1)
+            
+            # Create a mask for points that should be shifted (those after the insertion point)
+            shift_mask = src_indices >= insert_indices_expanded
+            
+            # Create destination indices tensor
+            # Points before insertion keep same index, points after insertion are shifted by 1
+            dst_indices = src_indices.clone()
+            dst_indices[shift_mask] += 1
+            
+            # Flatten everything for gather/scatter operations
+            batch_indices_expanded = batch_indices.unsqueeze(1).expand(-1, self.num_points-1).reshape(-1)
+            src_indices_flat = src_indices.reshape(-1)
+            dst_indices_flat = dst_indices.reshape(-1)
+            
+            # Gather the kept positions and values
+            kept_positions_flat = kept_positions.reshape(batch_size * (self.num_points-1))
+            kept_values_flat = kept_values.reshape(batch_size * (self.num_points-1))
+            
+            # Create flattened output tensors
+            new_positions_flat = new_positions.reshape(batch_size * self.num_points)
+            new_values_flat = new_values.reshape(batch_size * self.num_points)
+            
+            # Use scatter to place kept values at their correct positions
+            # Calculate the indices for scatter
+            scatter_indices = batch_indices_expanded * self.num_points + dst_indices_flat
+            
+            # Scatter the kept positions and values
+            new_positions_flat.scatter_(0, scatter_indices, kept_positions_flat)
+            new_values_flat.scatter_(0, scatter_indices, kept_values_flat)
+            
+            # Now handle the insertion of new points
+            # Calculate indices for inserting new points
+            insert_scatter_indices = batch_indices * self.num_points + insert_indices_flat
+            
+            # Scatter the new positions and values
+            new_positions_flat.scatter_(0, insert_scatter_indices, new_pos.reshape(-1))
+            new_values_flat.scatter_(0, insert_scatter_indices, new_val.reshape(-1))
+            
+            # Reshape back to original dimensions
+            new_positions = new_positions_flat.reshape(self.num_inputs, self.num_outputs, self.num_points)
+            new_values = new_values_flat.reshape(self.num_inputs, self.num_outputs, self.num_points)
+            
+            # This approach is the most reliable and still much faster than the original nested loops
+            # It uses a single loop over the batch size instead of nested loops over inputs and outputs
             
             # Update the layer's positions and values
             self.positions.data = new_positions
             self.values.data = new_values
             
             return True
+
+
+    
