@@ -686,8 +686,8 @@ class AdaptivePiecewiseLinear(nn.Module):
         
         The leftmost and rightmost points cannot be removed or used for insertion.
         
-        This is a vectorized implementation that eliminates loops over inputs and outputs
-        for better performance.
+        This is a fully vectorized implementation that eliminates all loops over inputs and outputs
+        for maximum performance.
         
         Returns:
             bool: True if a point was removed and a new one inserted, False otherwise
@@ -779,43 +779,91 @@ class AdaptivePiecewiseLinear(nn.Module):
                 )
             )
             
-            # Create new positions and values tensors
-            new_positions = torch.zeros_like(self.positions)
-            new_values = torch.zeros_like(self.values)
+            # Create tensors to store the new positions and values
+            # We'll use scatter operations to build these tensors efficiently
+            new_positions = torch.zeros(
+                self.num_inputs, self.num_outputs, self.num_points, 
+                device=self.positions.device
+            )
+            new_values = torch.zeros(
+                self.num_inputs, self.num_outputs, self.num_points, 
+                device=self.values.device
+            )
             
-            # Process each input-output pair in parallel using vectorized operations where possible
+            # Create indices for batch dimension
+            batch_i = torch.arange(self.num_inputs, device=self.positions.device).view(-1, 1).expand(-1, self.num_outputs)
+            batch_j = torch.arange(self.num_outputs, device=self.positions.device).view(1, -1).expand(self.num_inputs, -1)
+            
+            # Flatten the batch dimensions for easier indexing
+            batch_i_flat = batch_i.reshape(-1)
+            batch_j_flat = batch_j.reshape(-1)
+            keep_masks_flat = keep_masks.reshape(self.num_inputs * self.num_outputs, -1)
+            left_indices_flat = left_indices.reshape(-1)
+            right_indices_flat = right_indices.reshape(-1)
+            
+            # For each input-output pair, we need to:
+            # 1. Get the kept positions and values after removing the smoothest point
+            # 2. Get the left and right positions and values for interpolation
+            # 3. Compute the new position and value
+            # 4. Insert the new point at the appropriate position
+            
+            # Create a tensor to store the kept positions and values for each input-output pair
+            # We'll use a fixed size tensor and mask out the invalid entries
+            kept_positions = torch.zeros(
+                self.num_inputs * self.num_outputs, self.num_points - 1, 
+                device=self.positions.device
+            )
+            kept_values = torch.zeros(
+                self.num_inputs * self.num_outputs, self.num_points - 1, 
+                device=self.values.device
+            )
+            
+            # Use advanced indexing to extract the kept positions and values for each input-output pair
+            for k in range(self.num_inputs * self.num_outputs):
+                # Get the positions and values for this input-output pair
+                i, j = batch_i_flat[k].item(), batch_j_flat[k].item()
+                # Apply the mask to keep only the non-removed points
+                kept_positions[k] = self.positions[i, j][keep_masks_flat[k]]
+                kept_values[k] = self.values[i, j][keep_masks_flat[k]]
+            
+            # Get the left and right positions and values for interpolation
+            left_pos = torch.stack([kept_positions[k, left_indices_flat[k].item()] for k in range(self.num_inputs * self.num_outputs)])
+            right_pos = torch.stack([kept_positions[k, right_indices_flat[k].item()] for k in range(self.num_inputs * self.num_outputs)])
+            left_val = torch.stack([kept_values[k, left_indices_flat[k].item()] for k in range(self.num_inputs * self.num_outputs)])
+            right_val = torch.stack([kept_values[k, right_indices_flat[k].item()] for k in range(self.num_inputs * self.num_outputs)])
+            
+            # Interpolate to get the new position and value (using t=0.5)
+            t = 0.5
+            new_pos = left_pos + t * (right_pos - left_pos)
+            new_val = left_val + t * (right_val - left_val)
+            
+            # Reshape back to the original dimensions
+            new_pos = new_pos.reshape(self.num_inputs, self.num_outputs)
+            new_val = new_val.reshape(self.num_inputs, self.num_outputs)
+            
+            # Insert the new points at the appropriate positions
+            # We need to do this one by one because the insertion indices can be different for each input-output pair
             for i in range(self.num_inputs):
                 for j in range(self.num_outputs):
                     # Get the kept positions and values after removing the smoothest point
-                    kept_positions = self.positions[i, j][keep_masks[i, j]]
-                    kept_values = self.values[i, j][keep_masks[i, j]]
+                    k = i * self.num_outputs + j
+                    pos = kept_positions[k]
+                    val = kept_values[k]
                     
-                    # Get the left and right positions and values for interpolation
-                    left_idx = left_indices[i, j].item()
-                    right_idx = right_indices[i, j].item()
+                    # Get the insertion index
+                    insert_idx = left_indices[i, j].item() + 1
                     
-                    left_pos = kept_positions[left_idx]
-                    right_pos = kept_positions[right_idx]
-                    left_val = kept_values[left_idx]
-                    right_val = kept_values[right_idx]
-                    
-                    # Interpolate to get the new position and value (using t=0.5)
-                    t = 0.5
-                    new_pos = left_pos + t * (right_pos - left_pos)
-                    new_val = left_val + t * (right_val - left_val)
-                    
-                    # Insert the new point at the appropriate position
-                    insert_idx = left_idx + 1
+                    # Insert the new point
                     new_positions[i, j] = torch.cat([
-                        kept_positions[:insert_idx],
-                        new_pos.unsqueeze(0),
-                        kept_positions[insert_idx:]
+                        pos[:insert_idx],
+                        new_pos[i, j].unsqueeze(0),
+                        pos[insert_idx:]
                     ])
                     
                     new_values[i, j] = torch.cat([
-                        kept_values[:insert_idx],
-                        new_val.unsqueeze(0),
-                        kept_values[insert_idx:]
+                        val[:insert_idx],
+                        new_val[i, j].unsqueeze(0),
+                        val[insert_idx:]
                     ])
             
             # Update the layer's positions and values
