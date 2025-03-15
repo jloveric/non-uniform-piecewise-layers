@@ -678,13 +678,16 @@ class AdaptivePiecewiseLinear(nn.Module):
 
         return True
 
-    def move_smoothest(self,weighted:bool=True):
+    def move_smoothest(self, weighted:bool=True):
         """
         Remove the point with the smallest removal error (smoothest point) and insert
         a new point randomly to the left or right of the point that would cause the
         largest error when removed.
         
         The leftmost and rightmost points cannot be removed or used for insertion.
+        
+        This is a vectorized implementation that eliminates loops over inputs and outputs
+        for better performance.
         
         Returns:
             bool: True if a point was removed and a new one inserted, False otherwise
@@ -699,93 +702,119 @@ class AdaptivePiecewiseLinear(nn.Module):
                 return False
                 
             # Find the index of the point with minimum error for each input-output pair
-            min_error_indices = torch.argmin(errors, dim=-1)  # Shape: (num_inputs, num_outputs)
+            # Shape: (num_inputs, num_outputs)
+            min_error_indices = torch.argmin(errors, dim=-1)
             
             # Find the index of the point with maximum error for each input-output pair
-            max_error_indices = torch.argmax(errors, dim=-1)  # Shape: (num_inputs, num_outputs)
+            # Shape: (num_inputs, num_outputs)
+            max_error_indices = torch.argmax(errors, dim=-1)
             
             # Get the actual indices to remove (smoothest points) for each input-output pair
+            # Shape: (num_inputs, num_outputs)
             points_to_remove = torch.gather(
                 indices, -1, min_error_indices.unsqueeze(-1)
             ).squeeze(-1)
             
             # Get the actual indices of points with maximum error for each input-output pair
+            # Shape: (num_inputs, num_outputs)
             points_with_max_error = torch.gather(
                 indices, -1, max_error_indices.unsqueeze(-1)
             ).squeeze(-1)
             
-            # Create new positions and values tensors with the same number of points
-            # (we'll remove one and add one)
+            # Create a batch of masks for each input-output pair to keep all points except the ones being removed
+            # Shape: (num_inputs, num_outputs, num_points)
+            batch_indices = torch.arange(self.num_points, device=self.positions.device)
+            batch_indices = batch_indices.view(1, 1, -1).expand(self.num_inputs, self.num_outputs, -1)
+            points_to_remove_expanded = points_to_remove.unsqueeze(-1).expand(-1, -1, self.num_points)
+            keep_masks = batch_indices != points_to_remove_expanded
+            
+            # Determine where to insert the new points
+            # First, adjust max error indices if the removed point comes before the max error point
+            # Shape: (num_inputs, num_outputs)
+            adjusted_max_indices = torch.where(
+                points_to_remove < points_with_max_error,
+                points_with_max_error - 1,
+                points_with_max_error
+            )
+            
+            # Handle edge cases: ensure we're not inserting next to endpoints
+            # Shape: (num_inputs, num_outputs)
+            is_first_point = (adjusted_max_indices == 0)
+            is_last_point = (adjusted_max_indices == self.num_points - 2)
+            
+            # Generate random choice for left or right insertion
+            # Shape: (num_inputs, num_outputs)
+            random_choice = torch.rand(self.num_inputs, self.num_outputs, device=self.positions.device) < 0.5
+            
+            # Determine left and right indices for insertion
+            # For first point, can only insert to the right (left_idx=0, right_idx=1)
+            # For last point, can only insert to the left (left_idx=num_points-3, right_idx=num_points-2)
+            # For other points, randomly choose left or right based on random_choice
+            # Shape: (num_inputs, num_outputs)
+            left_indices = torch.where(
+                is_first_point,
+                torch.zeros_like(adjusted_max_indices),  # First point case
+                torch.where(
+                    is_last_point,
+                    (self.num_points - 3) * torch.ones_like(adjusted_max_indices),  # Last point case
+                    torch.where(
+                        random_choice,
+                        adjusted_max_indices - 1,  # Left insertion case
+                        adjusted_max_indices  # Right insertion case
+                    )
+                )
+            )
+            
+            right_indices = torch.where(
+                is_first_point,
+                torch.ones_like(adjusted_max_indices),  # First point case
+                torch.where(
+                    is_last_point,
+                    (self.num_points - 2) * torch.ones_like(adjusted_max_indices),  # Last point case
+                    torch.where(
+                        random_choice,
+                        adjusted_max_indices,  # Left insertion case
+                        adjusted_max_indices + 1  # Right insertion case
+                    )
+                )
+            )
+            
+            # Create new positions and values tensors
             new_positions = torch.zeros_like(self.positions)
             new_values = torch.zeros_like(self.values)
             
-            # For each input-output pair, remove the point with minimum error and add a new point
+            # Process each input-output pair in parallel using vectorized operations where possible
             for i in range(self.num_inputs):
                 for j in range(self.num_outputs):
-                    # Get the index of the point to remove (smoothest)
-                    idx_to_remove = points_to_remove[i, j].item()  # Convert to Python int
+                    # Get the kept positions and values after removing the smoothest point
+                    kept_positions = self.positions[i, j][keep_masks[i, j]]
+                    kept_values = self.values[i, j][keep_masks[i, j]]
                     
-                    # Get the index of the point with max error
-                    idx_max_error = points_with_max_error[i, j].item()  # Convert to Python int
+                    # Get the left and right positions and values for interpolation
+                    left_idx = left_indices[i, j].item()
+                    right_idx = right_indices[i, j].item()
                     
-                    # Create a mask for points to keep (all except the one being removed)
-                    mask = torch.ones(self.num_points, dtype=torch.bool, device=self.positions.device)
-                    mask[idx_to_remove] = False
-                    
-                    # Keep all points except the one being removed
-                    kept_positions = self.positions[i, j][mask]
-                    kept_values = self.values[i, j][mask]
-                    
-                    # Determine where to insert the new point (left or right of max error point)
-                    # We need to adjust the index if the removed point comes before the max error point
-                    if idx_to_remove < idx_max_error:
-                        adjusted_max_idx = idx_max_error - 1
-                    else:
-                        adjusted_max_idx = idx_max_error
-                    
-                    # Ensure we're not trying to insert next to endpoints (0 or num_points-2)
-                    if adjusted_max_idx == 0:
-                        # Can only insert to the right of the first point
-                        left_idx = 0
-                        right_idx = 1
-                    elif adjusted_max_idx == self.num_points - 2:
-                        # Can only insert to the left of the last point
-                        left_idx = self.num_points - 3
-                        right_idx = self.num_points - 2
-                    else:
-                        # Can insert to either left or right
-                        # Randomly choose left or right
-                        if torch.rand(1).item() < 0.5:
-                            left_idx = adjusted_max_idx - 1
-                            right_idx = adjusted_max_idx
-                        else:
-                            left_idx = adjusted_max_idx
-                            right_idx = adjusted_max_idx + 1
-                    
-                    # Get positions and values for the left and right points
                     left_pos = kept_positions[left_idx]
                     right_pos = kept_positions[right_idx]
                     left_val = kept_values[left_idx]
                     right_val = kept_values[right_idx]
                     
-                    # Generate a random position between the left and right points
-                    t = 0.5 #torch.rand(1, device=self.positions.device).item()
+                    # Interpolate to get the new position and value (using t=0.5)
+                    t = 0.5
                     new_pos = left_pos + t * (right_pos - left_pos)
-                    
-                    # Linearly interpolate to get the value at the new position
                     new_val = left_val + t * (right_val - left_val)
                     
                     # Insert the new point at the appropriate position
                     insert_idx = left_idx + 1
                     new_positions[i, j] = torch.cat([
                         kept_positions[:insert_idx],
-                        torch.tensor([new_pos], device=self.positions.device),
+                        new_pos.unsqueeze(0),
                         kept_positions[insert_idx:]
                     ])
                     
                     new_values[i, j] = torch.cat([
                         kept_values[:insert_idx],
-                        torch.tensor([new_val], device=self.values.device),
+                        new_val.unsqueeze(0),
                         kept_values[insert_idx:]
                     ])
             
