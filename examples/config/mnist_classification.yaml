@@ -14,7 +14,7 @@ hydra:
 epochs: 10
 batch_size: 64
 learning_rate: 1e-3
-device: cpu  # 'cuda' or 'cpu'
+device: cuda  # 'cuda' or 'cpu'
 training_fraction: 1.0  # Fraction of training set to use (0.0-1.0)
 move_nodes: True
 
@@ -22,6 +22,7 @@ move_nodes: True
 max_points: 20
 adapt_frequency: 100
 num_points: 10
+model_type: 'hybrid'  # Options: 'adaptive', 'hybrid', 'standard'
 
 # TensorBoard settings
 tensorboard:

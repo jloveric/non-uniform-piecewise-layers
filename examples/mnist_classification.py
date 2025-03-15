@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import os
 import numpy as np
 from non_uniform_piecewise_layers import AdaptivePiecewiseConv2d
+from non_uniform_piecewise_layers.adaptive_piecewise_linear import AdaptivePiecewiseLinear
 from lion_pytorch import Lion
 import hydra
 from hydra.core.hydra_config import HydraConfig
@@ -26,17 +27,17 @@ np.random.seed(42)
 class AdaptiveConvNet(nn.Module):
     def __init__(self, num_points=3):
         super().__init__()
-        # First convolutional layer: 1 input channel, 16 output channels
+        # First convolutional layer: 1 input channel, 4 output channels
         self.conv1 = AdaptivePiecewiseConv2d(1, 4, kernel_size=3, num_points=num_points)
         self.pool1 = nn.MaxPool2d(2)
         
-        # Second convolutional layer: 16 input channels, 32 output channels
+        # Second convolutional layer: 4 input channels, 8 output channels
         self.conv2 = AdaptivePiecewiseConv2d(4, 8, kernel_size=3, num_points=num_points)
         self.pool2 = nn.MaxPool2d(2)
         
         # Calculate the size of flattened features
         # Input: 28x28 -> Conv1: 26x26 -> Pool1: 13x13
-        # Conv2: 11x11 -> Pool2: 5x5 -> Flattened: 5*5*32
+        # Conv2: 11x11 -> Pool2: 5x5 -> Flattened: 5*5*8
         self.fc1 = nn.Linear(5*5*8, 10)
 
     def forward(self, x):
@@ -51,6 +52,63 @@ class AdaptiveConvNet(nn.Module):
         with torch.no_grad():
             success = self.conv1.move_smoothest(weighted=weighted)
             success = success & self.conv2.move_smoothest(weighted=weighted)
+        return success
+
+class HybridConvNet(nn.Module):
+    def __init__(self, num_points=3):
+        super().__init__()
+        # First convolutional layer: 1 input channel, 4 output channels
+        self.conv1 = nn.Conv2d(1, 4, kernel_size=3)
+        self.pool1 = nn.MaxPool2d(2)
+        
+        # Second convolutional layer: 4 input channels, 8 output channels
+        self.conv2 = nn.Conv2d(4, 8, kernel_size=3)
+        self.pool2 = nn.MaxPool2d(2)
+        
+        # Calculate the size of flattened features
+        # Input: 28x28 -> Conv1: 26x26 -> Pool1: 13x13
+        # Conv2: 11x11 -> Pool2: 5x5 -> Flattened: 5*5*8
+        self.fc1 = AdaptivePiecewiseLinear(5*5*8, 10, num_points=num_points)
+
+    def forward(self, x):
+        x = self.pool1(F.relu(self.conv1(x)))
+        x = self.pool2(F.relu(self.conv2(x)))
+        x = x.reshape(-1, 5*5*8)
+        x = self.fc1(x)
+        return x
+
+    def move_smoothest(self, weighted:bool=True):
+        success = True
+        with torch.no_grad():
+            success = self.fc1.move_smoothest(weighted=weighted)
+        return success
+
+class StandardConvNet(nn.Module):
+    def __init__(self, num_points=None):  # num_points is ignored but kept for consistent interface
+        super().__init__()
+        # First convolutional layer: 1 input channel, 4 output channels
+        self.conv1 = nn.Conv2d(1, 4, kernel_size=3)
+        self.pool1 = nn.MaxPool2d(2)
+        
+        # Second convolutional layer: 4 input channels, 8 output channels
+        self.conv2 = nn.Conv2d(4, 8, kernel_size=3)
+        self.pool2 = nn.MaxPool2d(2)
+        
+        # Calculate the size of flattened features
+        # Input: 28x28 -> Conv1: 26x26 -> Pool1: 13x13
+        # Conv2: 11x11 -> Pool2: 5x5 -> Flattened: 5*5*8
+        self.fc1 = nn.Linear(5*5*8, 10)
+
+    def forward(self, x):
+        x = self.pool1(F.relu(self.conv1(x)))
+        x = self.pool2(F.relu(self.conv2(x)))
+        x = x.reshape(-1, 5*5*8)
+        x = self.fc1(x)
+        return x
+
+    def move_smoothest(self, weighted:bool=True):
+        # This is a no-op for the standard network, but kept for consistent interface
+        return True
 
 def generate_optimizer(parameters, learning_rate):
     """Generate the optimizer for training"""
@@ -85,8 +143,14 @@ def train(model, train_loader, test_loader, epochs, device, learning_rate, max_p
             # Log to TensorBoard
             if writer is not None and batch_idx % log_interval == 0:
                 writer.add_scalar('training/batch_loss', loss.item(), global_step)
-                writer.add_scalar('model/conv1_points', model.conv1.piecewise.positions.shape[-1], global_step)
-                writer.add_scalar('model/conv2_points', model.conv2.piecewise.positions.shape[-1], global_step)
+                
+                # Log model-specific metrics
+                if isinstance(model, AdaptiveConvNet):
+                    writer.add_scalar('model/conv1_points', model.conv1.piecewise.positions.shape[-1], global_step)
+                    writer.add_scalar('model/conv2_points', model.conv2.piecewise.positions.shape[-1], global_step)
+                elif isinstance(model, HybridConvNet):
+                    writer.add_scalar('model/fc1_points', model.fc1.positions.shape[-1], global_step)
+                
                 global_step += 1
             
             #if batch_idx % 100 == 0:
@@ -171,16 +235,14 @@ def main(cfg: DictConfig):
     adapt_frequency = cfg.adapt_frequency
     num_points = cfg.num_points
     training_fraction = cfg.training_fraction
-    move_nodes=cfg.move_nodes
+    move_nodes = cfg.move_nodes
+    model_type = cfg.model_type
     
     # Set up TensorBoard writer
     writer = None
     if cfg.tensorboard.enabled:
         writer = SummaryWriter()
         logger.info(f"TensorBoard logs will be saved to {writer.log_dir}")
-    if not torch.cuda.is_available() and device == 'cuda':
-        print("CUDA not available, using CPU instead")
-        device = 'cpu'
     print(f"Using device: {device}")
 
     # Create data loaders
@@ -211,8 +273,19 @@ def main(cfg: DictConfig):
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     
-    # Create model
-    model = AdaptiveConvNet(num_points=num_points).to(device)
+    # Create model based on model_type
+    if model_type == 'adaptive':
+        model = AdaptiveConvNet(num_points=num_points).to(device)
+        logger.info(f"AdaptiveConvNet initialized with {num_points} points per piecewise function")
+    elif model_type == 'hybrid':
+        model = HybridConvNet(num_points=num_points).to(device)
+        logger.info(f"HybridConvNet initialized with {num_points} points in the linear layer")
+    elif model_type == 'standard':
+        model = StandardConvNet().to(device)
+        logger.info("StandardConvNet initialized with regular Conv2d and Linear layers")
+    else:
+        logger.error(f"Unknown model type: {model_type}. Using AdaptiveConvNet as default.")
+        model = AdaptiveConvNet(num_points=num_points).to(device)
     
     # Train the model
     train_losses, test_accuracies = train(
