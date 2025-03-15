@@ -121,6 +121,7 @@ def train(model, train_loader, test_loader, epochs, device, learning_rate, max_p
     train_losses = []
     test_accuracies = []
     global_step = 0
+    training_step = 0
     
     for epoch in range(epochs):
         model.train()
@@ -157,10 +158,12 @@ def train(model, train_loader, test_loader, epochs, device, learning_rate, max_p
             #    logger.info(f'Epoch {epoch+1}, Batch {batch_idx}, Loss: {loss.item():.4f}')
             #    logger.info(f'Conv1 points: {model.conv1.piecewise.positions.shape[-1]}, Conv2 points: {model.conv2.piecewise.positions.shape[-1]}')
         
-            if move_nodes:
+            if move_nodes and (training_step%adapt_frequency)==0:
                 model.move_smoothest(weighted=True)
                 optimizer = generate_optimizer(model.parameters(), learning_rate)
+                print('adapting')
 
+            training_step+=1
 
         # Calculate average loss for the epoch
         epoch_loss = running_loss / len(train_loader)
