@@ -302,23 +302,23 @@ def main(cfg: DictConfig):
     # Set up TensorBoard writer
     writer = None
     if cfg.tensorboard.enabled:
+        # Create a log directory
         writer = SummaryWriter()
         logger.info(f"TensorBoard logs will be saved to {writer.log_dir}")
         
         # Prepare hyperparameters dictionary for TensorBoard
-        # Convert all values to strings as TensorBoard expects
         hparams = {
-            'epochs': str(epochs),
-            'batch_size': str(batch_size),
-            'learning_rate': str(learning_rate),
-            'max_points': str(max_points),
-            'adapt_frequency': str(adapt_frequency),
-            'num_points': str(num_points),
-            'training_fraction': str(training_fraction),
-            'move_nodes': str(move_nodes),
-            'model_type': model_type
+            'epochs': epochs,
+            'batch_size': batch_size,
+            'learning_rate': learning_rate,
+            'max_points': max_points,
+            'adapt_frequency': adapt_frequency,
+            'num_points': num_points,
+            'training_fraction': training_fraction,
+            'move_nodes': move_nodes,
+            'model_type': model_type,
+            'test_interval': test_interval
         }
-        # We'll add metrics after training completes
         
     print(f"Using device: {device}")
 
@@ -408,7 +408,7 @@ def main(cfg: DictConfig):
         final_val_accuracy = val_accuracies[-1] if val_accuracies else 0
         final_loss = train_losses[-1] if train_losses else 0
         
-        # Create metric dictionaries for TensorBoard
+        # Create metric dictionary for hparams
         metric_dict = {
             'hparam/test_accuracy': final_test_accuracy,
             'hparam/train_accuracy': final_train_accuracy,
@@ -416,11 +416,7 @@ def main(cfg: DictConfig):
             'hparam/loss': final_loss
         }
         
-        # Log metrics individually first (required for hparams visualization)
-        for metric_name, metric_value in metric_dict.items():
-            writer.add_scalar(metric_name, metric_value)
-        
-        # Log hyperparameters and metrics together using the same writer
+        # Log hyperparameters and metrics together
         writer.add_hparams(hparams, metric_dict)
         writer.close()
         logger.info("TensorBoard writer closed successfully")
