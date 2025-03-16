@@ -19,10 +19,10 @@ training_fraction: 1.0  # Fraction of training set to use (0.0-1.0)
 move_nodes: True
 
 # Model parameters
-max_points: 20
+max_points: 100
 adapt_frequency: 100
 num_points: 10
-model_type: 'hybrid'  # Options: 'adaptive', 'hybrid', 'standard'
+model_type: 'adaptive'  # Options: 'adaptive', 'hybrid', 'standard'
 
 # TensorBoard settings
 tensorboard:

@@ -165,7 +165,7 @@ def train(model, train_loader, test_loader, epochs, device, learning_rate, max_p
             if move_nodes and (training_step%adapt_frequency)==0:
                 model.move_smoothest(weighted=True)
                 optimizer = generate_optimizer(model.parameters(), learning_rate)
-                print('adapting')
+                #print('adapting')
 
             training_step+=1
 
