@@ -66,6 +66,12 @@ Non default example
 python examples/dynamic_square_wave.py training.adapt=move model.num_points=20 training.refine_every_n_epochs=10 data.num_points=100
 ```
 
+## MNIST
+Running with and moving nodes with varrying number of points.
+```
+python examples/mnist_classification.py -m model_type=adaptive epochs=20 move_nodes=True,False num_points=10,20
+```
+
 ## Shakespeare
 Approaching good results with things like this
 ```
