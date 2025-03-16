@@ -119,64 +119,14 @@ def load_tiny_shakespeare(url, cache_dir):
     
     return cache_file.read_text()
 
-class PlateauDetector:
-    def __init__(self, patience=5, min_delta=1e-4, mode='min'):
-        """
-        Initialize plateau detector
-        Args:
-            patience: Number of epochs to wait before triggering plateau detection
-            min_delta: Minimum change in metric to be considered as improvement
-            mode: 'min' for loss, 'max' for accuracy
-        """
-        self.patience = patience
-        self.min_delta = min_delta
-        self.mode = mode
-        self.best_value = float('inf') if mode == 'min' else float('-inf')
-        self.counter = 0
-        self.history = []
-        
-    def update(self, value):
-        """
-        Update the plateau detector with a new value
-        Returns True if plateau is detected
-        """
-        self.history.append(value)
-        
-        if self.mode == 'min':
-            improved = value < (self.best_value - self.min_delta)
-        else:
-            improved = value > (self.best_value + self.min_delta)
-            
-        if improved:
-            self.best_value = value
-            self.counter = 0
-            return False
-        else:
-            self.counter += 1
-            return self.counter >= self.patience
-            
-    def reset(self):
-        """Reset the plateau detector"""
-        self.best_value = float('inf') if self.mode == 'min' else float('-inf')
-        self.counter = 0
 
-def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=None, remove_add_every_n_batches=10, plateau_mode=False, plateau_adjustments=3, error_tracking_batches=5,adapt="move"):
+
+def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=None, iteration=0, move_every_n_batches=10, adapt="move"):
     model.train()
     total_loss = 0
     total_accuracy = 0
     num_batches = 0
-    batch_since_last_remove_add = 0
-    max_error = None
-    max_error_input = None
-    
-    # For tracking errors across multiple batches
-    error_tracking = []
-    
-    # In plateau mode, calculate when to do the remove_add operations
-    if plateau_mode:
-        total_batches = len(data_loader)
-        # Spread the adjustments evenly across the epoch
-        adjustment_points = [total_batches // (plateau_adjustments + 1) * (i + 1) for i in range(plateau_adjustments)]
+    current_iteration = iteration
     
     for i, (sequences, targets) in enumerate(tqdm(data_loader, desc="Training")):
         sequences = sequences.to(device)
@@ -193,70 +143,17 @@ def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=Non
         correct = (predictions == targets.view(-1)).float().mean()
         total_accuracy += correct.item()
         num_batches += 1
+        current_iteration += 1
         
-        batch_since_last_remove_add += 1
-        
-        if adapt == "global_error":
-            # Calculate error for this batch
-            with torch.no_grad():
-                B, T, V = output.shape
-                error = output.view(-1, output.size(-1)) - torch.nn.functional.one_hot(targets.view(-1), num_classes=output.size(-1)).float()
-                error = torch.sum(torch.abs(error.view(B, T, V)), dim=2)
-                batch_max_error, flat_idx = error.view(-1).max(dim=0)
-                B_idx, T_idx = torch.unravel_index(flat_idx, error.shape)
-                
-                # Store error information for this batch
-                x_error = sequences[B_idx, T_idx].unsqueeze(0).unsqueeze(0)
-                if T_idx > 0:
-                    h_error = [this_h[B_idx, T_idx-1].unsqueeze(0) for this_h in h]
-                else:
-                    h_error = 0
-                    
-                error_tracking.append({
-                    'error': batch_max_error,
-                    'x_error': x_error,
-                    'h_error': h_error,
-                    'batch_idx': i
-                })
-                
-                # Keep only the last error_tracking_batches
-                if len(error_tracking) > error_tracking_batches:
-                    error_tracking.pop(0)
-            
-        # Determine if we should do remove_add based on mode
-        should_remove_add = (
-            (plateau_mode and i in adjustment_points) or
-            (not plateau_mode and batch_since_last_remove_add >= remove_add_every_n_batches)
-        )
-        if adapt=="global_error":
-            # Call remove_add if conditions are met
-            if should_remove_add and error_tracking:
-                # Find the maximum error across all tracked batches
-                max_error_batch = max(error_tracking, key=lambda x: x['error'])
-                max_error_input = (max_error_batch['x_error'], max_error_batch['h_error'])
-                
-                success = model.remove_add(*max_error_input)
-                if success:
-                    print(f'Moved points! Using error from batch {max_error_batch["batch_idx"]}')
-                    optimizer = Lion(model.parameters(), lr=optimizer.param_groups[0]['lr'])
-                
-                # Clear error tracking after remove_add
-                error_tracking = []
-                batch_since_last_remove_add = 0
-        elif adapt=="move":
-            if batch_since_last_remove_add >= remove_add_every_n_batches:
-                model.move_smoothest()
-                optimizer = Lion(model.parameters(), lr=optimizer.param_groups[0]['lr'])
-                batch_since_last_remove_add = 0
-        elif adapt==None:
-            pass
-        else:
-            raise ValueError(f"Adaptation {adapt} not recognized")
+        # Call move_smoothest every n batches
+        if adapt=="move" and current_iteration % move_every_n_batches == 0:
+            model.move_smoothest()
+            optimizer = Lion(model.parameters(), lr=optimizer.param_groups[0]['lr'])
             
         # Log batch loss and accuracy to tensorboard
         if writer is not None and epoch is not None:
-            writer.add_scalar('Loss/batch', loss.item(), epoch * len(data_loader) + i)
-            writer.add_scalar('Accuracy/batch', correct.item(), epoch * len(data_loader) + i)
+            writer.add_scalar('Loss/batch', loss.item(), current_iteration)
+            writer.add_scalar('Accuracy/batch', correct.item(), current_iteration)
             
     avg_loss = total_loss / len(data_loader)
     avg_accuracy = total_accuracy / num_batches
@@ -264,7 +161,7 @@ def train_epoch(model, data_loader, criterion, optimizer, writer=None, epoch=Non
         writer.add_scalar('Loss/epoch', avg_loss, epoch)
         writer.add_scalar('Accuracy/epoch', avg_accuracy, epoch)
     
-    return avg_loss, avg_accuracy, optimizer
+    return avg_loss, avg_accuracy, optimizer, current_iteration
 
 @hydra.main(version_base=None, config_path="config", config_name="shakespeare_generation")
 def main(cfg: DictConfig):
@@ -314,42 +211,15 @@ def main(cfg: DictConfig):
     os.makedirs(checkpoint_dir, exist_ok=True)
     
     best_loss = float('inf')
-    # Store original remove_add_every_n_batches value
-    original_remove_add_every_n_batches = cfg.training.remove_add_every_n_batches
-    
-    # Initialize plateau detectors for both loss and accuracy
-    loss_plateau_detector = PlateauDetector(
-        patience=cfg.training.plateau_patience,
-        min_delta=cfg.training.plateau_min_delta,
-        mode='min'
-    )
-    
-    plateau_mode = False  # Track if we're in plateau recovery mode
+    iteration = 0
     
     for epoch in range(cfg.training.num_epochs):
-        loss, accuracy, optimizer = train_epoch(
-            model, data_loader, criterion, optimizer, writer, epoch, 
-            remove_add_every_n_batches=cfg.training.remove_add_every_n_batches,
-            plateau_mode=plateau_mode,
-            plateau_adjustments=cfg.training.plateau_adjustments,
-            error_tracking_batches=cfg.training.error_tracking_batches,
+        loss, accuracy, optimizer, iteration = train_epoch(
+            model, data_loader, criterion, optimizer, writer, epoch,
+            iteration=iteration,
+            move_every_n_batches=cfg.training.move_every_n_batches,
             adapt=cfg.training.adapt
         )
-        
-        plateau_mode = False
-        # Check for plateaus
-        """
-        loss_plateaued = loss_plateau_detector.update(loss)
-        
-        if loss_plateaued:
-            logger.info(f"Plateau detected at epoch {epoch}. Entering plateau recovery mode.")
-            plateau_mode = True
-            loss_plateau_detector.reset()
-        else:
-            if plateau_mode:
-                logger.info(f"Exiting plateau recovery mode at epoch {epoch}.")
-            plateau_mode = False
-        """
 
         # Generate sample text with different temperatures
         if epoch % cfg.training.sample_every == 0:
