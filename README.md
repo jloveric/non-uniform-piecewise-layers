@@ -67,9 +67,9 @@ python examples/dynamic_square_wave.py training.adapt=move model.num_points=20 t
 ```
 
 ## MNIST
-Running with and moving nodes with varrying number of points.
+Running with and moving nodes with varrying number of points. You can run with larger learning_rate, to get faster results
 ```
-python examples/mnist_classification.py -m model_type=adaptive epochs=20 move_nodes=True,False num_points=10,20
+python examples/mnist_classification.py -m model_type=adaptive epochs=100 move_nodes=True,False num_points=10 learning_rate=1e-4
 ```
 
 ## Shakespeare
