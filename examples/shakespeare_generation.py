@@ -228,7 +228,7 @@ def main(cfg: DictConfig):
             start_idx = dataset.char_to_idx[start_char]
             
             # Generate with different temperatures
-            temperatures = [0.0, 0.5, 1.0]
+            temperatures = [0.0, 0.25, 0.5, 1.0]
             for temp in temperatures:
                 generated_chars = model.generate(
                     start_idx,

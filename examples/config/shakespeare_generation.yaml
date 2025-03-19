@@ -5,7 +5,7 @@ data:
   url: "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
   cache_dir: ${hydra:runtime.cwd}/data  # Use original working directory
   max_length: 20000  # Using first 1000 characters for quick testing
-  seq_length: 20
+  seq_length: 64
 
 model:
   hidden_size: 16

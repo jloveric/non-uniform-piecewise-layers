@@ -80,8 +80,8 @@ def solve_recurrence_unstable(a, b, h0):
 def prefix_sum_hidden_states(z, h_bar, h0):
     a = (1-z)
     b=z*h_bar
-    #ans = solve_recurrence_unstable(a,b,h0)
     ans = solve_recurrence_unstable(a,b,h0)
+    #ans = solve_recurrence(a,b,h0)
 
     return ans
 

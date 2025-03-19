@@ -75,11 +75,11 @@ python examples/mnist_classification.py -m model_type=adaptive epochs=100 move_n
 ## Shakespeare
 Approaching good results with things like this
 ```
-python examples/shakespeare_generation.py -m training.learning_rate=1e-3 training.num_epochs=20 training.remove_add_every_n_batches=200 model.hidden_size=32,64 model.num_points=32 training.batch_size=128
+python examples/shakespeare_generation.py -m training.learning_rate=1e-3 training.num_epochs=20 training.move_every_n_batches=200 model.hidden_size=32,64 model.num_points=32 training.batch_size=128
 ```
 small memory machine
 ```
-python examples/shakespeare_generation.py -m training.learning_rate=1e-3 training.num_epochs=20 training.remove_add_every_n_batches=50 model.hidden_size=16 model.num_points=32 training.batch_size=64 training.adapt=move
+python examples/shakespeare_generation.py -m training.learning_rate=1e-3 training.num_epochs=20 training.move_every_n_batches=50 model.hidden_size=16 model.num_points=32 training.batch_size=64 training.adapt=move
 ```
 
 ## Running visualization tests
