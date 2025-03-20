@@ -12,6 +12,7 @@ from omegaconf import DictConfig, OmegaConf
 import logging
 import os
 from lion_pytorch import Lion
+from torch.utils.data import TensorDataset, DataLoader
 
 logger = logging.getLogger(__name__)
 
@@ -112,14 +113,44 @@ def main(cfg: DictConfig):
             amplitude=cfg.data.wave.amplitude
         )
         
-        # Forward pass
-        y_pred = model(x)
-        loss = nn.MSELoss()(y_pred, y)
+        # Determine whether to use minibatches or full batch
+        batch_size = cfg.training.batch_size
+        use_minibatch = batch_size is not None and batch_size > 0 and batch_size < len(x)
         
-        # Backward pass and optimize
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        if use_minibatch:
+            # Create DataLoader for minibatch training
+            dataset = TensorDataset(x, y)
+            data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+            
+            # Train with minibatches
+            total_loss = 0.0
+            for batch_x, batch_y in data_loader:
+                # Forward pass
+                batch_pred = model(batch_x)
+                batch_loss = nn.MSELoss()(batch_pred, batch_y)
+                total_loss += batch_loss.item() * batch_x.size(0)
+                
+                # Backward pass and optimize
+                optimizer.zero_grad()
+                batch_loss.backward()
+                optimizer.step()
+            
+            # Calculate average loss for the epoch
+            loss_value = total_loss / len(x)
+            
+            # For visualization and adaptation, use the full dataset
+            with torch.no_grad():
+                y_pred = model(x)
+        else:
+            # Original full-batch training
+            y_pred = model(x)
+            loss = nn.MSELoss()(y_pred, y)
+            loss_value = loss.item()
+            
+            # Backward pass and optimize
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
         
         if epoch % cfg.training.refine_every_n_epochs==0:
             if cfg.training.adapt == "global_error":
@@ -137,9 +168,9 @@ def main(cfg: DictConfig):
 
         # Save progress plot at specified intervals
         if epoch % cfg.visualization.plot_interval == 0:
-            save_progress_plot(model, x, y, epoch, loss.item(), position)
+            save_progress_plot(model, x, y, epoch, loss_value, position)
             images.append(imageio.imread(f'square_wave_{epoch:03d}.png'))
-            logger.info(f'Epoch {epoch}/{cfg.training.num_epochs}, Loss: {loss.item():.6f}, Position: {position}')
+            logger.info(f'Epoch {epoch}/{cfg.training.num_epochs}, Loss: {loss_value:.6f}, Position: {position}')
     
     # Save the images as a GIF
     imageio.mimsave('dynamic_square_wave.gif', images, duration=cfg.visualization.gif_duration)

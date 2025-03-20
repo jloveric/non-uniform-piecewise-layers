@@ -27,6 +27,7 @@ training:
   adapt: global_error # move, largest_error
   refine_every_n_epochs: 10
   optimizer: "lion" # sgd
+  batch_size: null  # Set to a positive integer (e.g., 64, 128) to use minibatches, or null for full-batch
 
 visualization:
   plot_interval: 10  # Save plots every N epochs
