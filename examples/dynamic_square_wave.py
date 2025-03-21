@@ -163,7 +163,9 @@ def main(cfg: DictConfig):
                     optimizer = generate_optimizer(model.parameters(), cfg.training.learning_rate, name=cfg.training.optimizer)
             elif cfg.training.adapt == "move":
                 logger.debug(f'Moving value')
-                model.move_smoothest()
+                threshold = cfg.training.move_threshold
+                moved_pairs, total_pairs = model.move_smoothest(weighted=cfg.training.weighted, threshold=threshold)
+                logger.info(f'Moved {moved_pairs}/{total_pairs} pairs ({moved_pairs/total_pairs*100:.2f}%)')
                 optimizer = generate_optimizer(model.parameters(), cfg.training.learning_rate, name=cfg.training.optimizer)
 
         # Save progress plot at specified intervals

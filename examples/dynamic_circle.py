@@ -182,7 +182,9 @@ def main(cfg: DictConfig):
                 success = model.remove_add(new_value)
                 optimizer = generate_optimizer(model.parameters(), cfg.training.learning_rate)
         elif cfg.training.adapt=="move" :
-            success = model.move_smoothest(weighted=cfg.training.weighted)
+            threshold = cfg.training.move_threshold
+            moved_pairs, total_pairs = model.move_smoothest(weighted=cfg.training.weighted, threshold=threshold)
+            logger.info(f'Moved {moved_pairs}/{total_pairs} pairs ({moved_pairs/total_pairs*100:.2f}%)')
             optimizer = generate_optimizer(model.parameters(), cfg.training.learning_rate)
         elif cfg.training.adapt==None:
             pass #No adaptation

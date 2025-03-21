@@ -602,9 +602,10 @@ class AdaptivePiecewiseLinear(nn.Module):
             # Get removal errors and indices
             errors, indices = self.compute_removal_errors(weighted=weighted)
 
-            # If we have no removable points, return False
+            # If we have no removable points, return 0 moved pairs
+            total_pairs = self.num_inputs * self.num_outputs
             if errors.numel() == 0:
-                return False
+                return 0, total_pairs
 
             # Find the index of the point with minimum error for each input-output pair
             min_error_indices = torch.argmin(
@@ -678,7 +679,36 @@ class AdaptivePiecewiseLinear(nn.Module):
 
         return True
 
-    def move_smoothest(self, weighted:bool=True):
+    def move_smoothest(self, weighted:bool=True, threshold:float=None):
+        """
+        Remove the point with the smallest removal error (smoothest point) and insert
+        a new point randomly to the left or right of the point that would cause the
+        largest error when removed.
+        
+        If threshold is provided, only points where the ratio of minimum error to maximum error
+        is below the threshold will be moved.
+        
+        The leftmost and rightmost points cannot be removed or used for insertion.
+        
+        This is a fully vectorized implementation that eliminates all loops over inputs and outputs
+        for maximum performance.
+        
+        Args:
+            weighted (bool): Whether to weight the errors by the distance between points.
+            threshold (float, optional): If provided, only move points where the ratio of 
+                                        minimum error to maximum error is below this threshold.
+                                        If None, all points are considered for movement.
+        
+        Returns:
+            tuple: (moved_pairs, total_pairs) where moved_pairs is the number of input-output pairs
+                  that were moved and total_pairs is the total number of input-output pairs.
+        """
+        if threshold is None:
+            return self.move_smoothest_all(weighted=weighted)
+        else:
+            return self.move_smoothest_threshold(weighted=weighted, threshold=threshold)
+            
+    def move_smoothest_all(self, weighted:bool=True):
         """
         Remove the point with the smallest removal error (smoothest point) and insert
         a new point randomly to the left or right of the point that would cause the
@@ -690,16 +720,17 @@ class AdaptivePiecewiseLinear(nn.Module):
         for maximum performance.
         
         Returns:
-            bool: True if a point was removed and a new one inserted, False otherwise
-                 (e.g., if there are only 2 points).
+            tuple: (moved_pairs, total_pairs) where moved_pairs is the number of input-output pairs
+                  that were moved and total_pairs is the total number of input-output pairs.
         """
         with torch.no_grad():
             # Get removal errors and indices
             errors, indices = self.compute_removal_errors(weighted=weighted)
             
-            # If we have no removable points, return False
+            # If we have no removable points, return 0 moved pairs
+            total_pairs = self.num_inputs * self.num_outputs
             if errors.numel() == 0:
-                return False
+                return 0, total_pairs
                 
             # Find the index of the point with minimum error for each input-output pair
             # Shape: (num_inputs, num_outputs)
@@ -960,7 +991,236 @@ class AdaptivePiecewiseLinear(nn.Module):
             self.positions.data = new_positions
             self.values.data = new_values
             
-            return True
+            # Return the number of pairs moved and the total number of pairs
+            moved_pairs = valid_count
+            total_pairs = self.num_inputs * self.num_outputs
+            return moved_pairs, total_pairs
+            
+    def move_smoothest_threshold(self, weighted:bool=True, threshold:float=0.5):
+        """
+        Remove the point with the smallest removal error (smoothest point) and insert
+        a new point randomly to the left or right of the point that would cause the
+        largest error when removed, but only for input-output pairs where the ratio of
+        minimum error to maximum error is below the specified threshold.
+        
+        The leftmost and rightmost points cannot be removed or used for insertion.
+        
+        This is a fully vectorized implementation that eliminates all loops over inputs and outputs
+        for maximum performance.
+        
+        Args:
+            weighted (bool): Whether to weight the errors by the distance between points.
+            threshold (float): Only move points where the ratio of minimum error to maximum error
+                              is below this threshold. Must be between 0 and 1.
+        
+        Returns:
+            tuple: (moved_pairs, total_pairs) where moved_pairs is the number of input-output pairs
+                  that were moved and total_pairs is the total number of input-output pairs.
+        """
+        with torch.no_grad():
+            # Get removal errors and indices
+            errors, indices = self.compute_removal_errors(weighted=weighted)
+            
+            # If we have no removable points, return 0 moved pairs
+            total_pairs = self.num_inputs * self.num_outputs
+            if errors.numel() == 0:
+                return 0, total_pairs
+                
+            # Find the index of the point with minimum error for each input-output pair
+            # Shape: (num_inputs, num_outputs)
+            min_error_indices = torch.argmin(errors, dim=-1)
+            min_errors = torch.gather(errors, -1, min_error_indices.unsqueeze(-1)).squeeze(-1)
+            
+            # Find the index of the point with maximum error for each input-output pair
+            # Shape: (num_inputs, num_outputs)
+            max_error_indices = torch.argmax(errors, dim=-1)
+            max_errors = torch.gather(errors, -1, max_error_indices.unsqueeze(-1)).squeeze(-1)
+            
+            # Calculate the ratio of minimum error to maximum error
+            # Add a small epsilon to avoid division by zero
+            epsilon = 1e-10
+            error_ratios = min_errors / (max_errors + epsilon)
+            
+            # Create a mask for input-output pairs that meet the threshold condition
+            # Only move points where the ratio is below the threshold
+            threshold_mask = error_ratios < threshold
+            
+            # If no points meet the threshold, return 0 moved pairs
+            total_pairs = self.num_inputs * self.num_outputs
+            if not torch.any(threshold_mask):
+                return 0, total_pairs
+            
+            # Get the actual indices to remove (smoothest points) for each input-output pair
+            # Shape: (num_inputs, num_outputs)
+            points_to_remove = torch.gather(
+                indices, -1, min_error_indices.unsqueeze(-1)
+            ).squeeze(-1)
+            
+            # Get the actual indices of points with maximum error for each input-output pair
+            # Shape: (num_inputs, num_outputs)
+            points_with_max_error = torch.gather(
+                indices, -1, max_error_indices.unsqueeze(-1)
+            ).squeeze(-1)
+            
+            # Create a batch of masks for each input-output pair to keep all points except the ones being removed
+            # Shape: (num_inputs, num_outputs, num_points)
+            batch_indices = torch.arange(self.num_points, device=self.positions.device)
+            batch_indices = batch_indices.view(1, 1, -1).expand(self.num_inputs, self.num_outputs, -1)
+            points_to_remove_expanded = points_to_remove.unsqueeze(-1).expand(-1, -1, self.num_points)
+            keep_masks = batch_indices != points_to_remove_expanded
+            
+            # Apply the threshold mask to keep all points for input-output pairs that don't meet the threshold
+            # For pairs that don't meet the threshold, we keep all points (set mask to True)
+            threshold_mask_expanded = threshold_mask.unsqueeze(-1).expand(-1, -1, self.num_points)
+            keep_masks = torch.where(threshold_mask_expanded, keep_masks, torch.ones_like(keep_masks, dtype=torch.bool))
+            
+            # Determine where to insert the new points
+            # First, adjust max error indices if the removed point comes before the max error point
+            # Shape: (num_inputs, num_outputs)
+            adjusted_max_indices = torch.where(
+                points_to_remove < points_with_max_error,
+                points_with_max_error - 1,
+                points_with_max_error
+            )
+            
+            # Handle edge cases: ensure we're not inserting next to endpoints
+            # Shape: (num_inputs, num_outputs)
+            is_first_point = (adjusted_max_indices == 0)
+            is_last_point = (adjusted_max_indices == self.num_points - 2)
+            
+            # Generate random choice for left or right insertion
+            # Shape: (num_inputs, num_outputs)
+            random_choice = torch.rand(self.num_inputs, self.num_outputs, device=self.positions.device) < 0.5
+            
+            # Determine left and right indices for insertion
+            # For first point, can only insert to the right (left_idx=0, right_idx=1)
+            # For last point, can only insert to the left (left_idx=num_points-3, right_idx=num_points-2)
+            # For other points, randomly choose left or right based on random_choice
+            # Shape: (num_inputs, num_outputs)
+            left_indices = torch.where(
+                is_first_point,
+                torch.zeros_like(adjusted_max_indices),  # First point case
+                torch.where(
+                    is_last_point,
+                    (self.num_points - 3) * torch.ones_like(adjusted_max_indices),  # Last point case
+                    torch.where(
+                        random_choice,
+                        adjusted_max_indices - 1,  # Left insertion case
+                        adjusted_max_indices  # Right insertion case
+                    )
+                )
+            )
+            
+            right_indices = torch.where(
+                is_first_point,
+                torch.ones_like(adjusted_max_indices),  # First point case
+                torch.where(
+                    is_last_point,
+                    (self.num_points - 2) * torch.ones_like(adjusted_max_indices),  # Last point case
+                    torch.where(
+                        random_choice,
+                        adjusted_max_indices,  # Left insertion case
+                        adjusted_max_indices + 1  # Right insertion case
+                    )
+                )
+            )
+            
+            # Apply the threshold mask to only consider pairs that meet the threshold
+            # For pairs that don't meet the threshold, we set indices to a dummy value (e.g., 0)
+            # This is fine because we'll use the threshold mask later to ignore these pairs
+            left_indices = torch.where(threshold_mask, left_indices, torch.zeros_like(left_indices))
+            right_indices = torch.where(threshold_mask, right_indices, torch.zeros_like(right_indices))
+            
+            # Prepare for batch processing
+            batch_i, batch_j = torch.meshgrid(torch.arange(self.num_inputs, device=self.positions.device),
+                                             torch.arange(self.num_outputs, device=self.positions.device),
+                                             indexing='ij')
+            
+            # Flatten everything for easier processing
+            keep_masks_flat = keep_masks.reshape(self.num_inputs * self.num_outputs, self.num_points)
+            left_indices_flat = left_indices.reshape(-1)
+            right_indices_flat = right_indices.reshape(-1)
+            threshold_mask_flat = threshold_mask.reshape(-1)
+            
+            # Create tensors to store the kept positions and values
+            kept_positions = torch.zeros(self.num_inputs * self.num_outputs, self.num_points - 1, device=self.positions.device)
+            kept_values = torch.zeros(self.num_inputs * self.num_outputs, self.num_points - 1, device=self.values.device)
+            
+            # Process each input-output pair
+            for k in range(self.num_inputs * self.num_outputs):
+                i, j = k // self.num_outputs, k % self.num_outputs
+                
+                # Skip pairs that don't meet the threshold
+                if not threshold_mask_flat[k]:
+                    continue
+                
+                # Apply the mask to keep only the non-removed points
+                kept_positions[k] = self.positions[i, j][keep_masks_flat[k]]
+                kept_values[k] = self.values[i, j][keep_masks_flat[k]]
+            
+            # Get the left and right positions and values for interpolation, but only for pairs that meet the threshold
+            # Create a mask to filter out pairs that don't meet the threshold
+            valid_indices = torch.arange(self.num_inputs * self.num_outputs, device=self.positions.device)[threshold_mask_flat]
+            
+            # If no valid indices (no pairs meet threshold), return 0 moved pairs
+            total_pairs = self.num_inputs * self.num_outputs
+            if valid_indices.numel() == 0:
+                return 0, total_pairs
+            
+            # Get positions and values only for valid pairs
+            left_pos = torch.stack([kept_positions[k, left_indices_flat[k].item()] for k in valid_indices])
+            right_pos = torch.stack([kept_positions[k, right_indices_flat[k].item()] for k in valid_indices])
+            left_val = torch.stack([kept_values[k, left_indices_flat[k].item()] for k in valid_indices])
+            right_val = torch.stack([kept_values[k, right_indices_flat[k].item()] for k in valid_indices])
+            
+            # Interpolate to get the new position and value (using t=0.5)
+            t = 0.5
+            new_pos = left_pos + t * (right_pos - left_pos)
+            new_val = left_val + t * (right_val - left_val)
+            
+            # Create new positions and values tensors that match the original shape
+            new_positions = self.positions.clone()
+            new_values = self.values.clone()
+            
+            # Process each valid input-output pair to update positions and values
+            valid_count = 0
+            for k in valid_indices:
+                i, j = k.item() // self.num_outputs, k.item() % self.num_outputs
+                
+                # Get the positions and values for this pair, excluding the removed point
+                current_positions = kept_positions[k]
+                current_values = kept_values[k]
+                
+                # Insert the new point at the appropriate position
+                insert_idx = left_indices_flat[k].item() + 1
+                
+                # Create the new sequence with the inserted point
+                new_pos_sequence = torch.cat([
+                    current_positions[:insert_idx],
+                    new_pos[valid_count].unsqueeze(0),
+                    current_positions[insert_idx:]
+                ])
+                
+                new_val_sequence = torch.cat([
+                    current_values[:insert_idx],
+                    new_val[valid_count].unsqueeze(0),
+                    current_values[insert_idx:]
+                ])
+                
+                # Update the positions and values for this pair
+                new_positions[i, j] = new_pos_sequence
+                new_values[i, j] = new_val_sequence
+                
+                valid_count += 1
+            
+            # Update the layer's positions and values
+            self.positions.data = new_positions
+            self.values.data = new_values
+            
+            # Return the number of pairs moved and the total number of pairs
+            moved_pairs = valid_count
+            total_pairs = self.num_inputs * self.num_outputs
+            return moved_pairs, total_pairs
 
 
     
