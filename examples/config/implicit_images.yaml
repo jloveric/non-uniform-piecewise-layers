@@ -6,8 +6,8 @@ image_path: "high-order-implicit-representation/images/jupiter.jpg"  # Sample im
 
 # Model configuration
 model:
-  hidden_layers: [128, 128, 128, 128]  # Sizes of hidden layers
-  rotations: 4                         # Number of rotations in the rotation layer
+  hidden_layers: [64, 64]  # Sizes of hidden layers
+  rotations: 2                         # Number of rotations in the rotation layer
   num_points: 5                        # Initial number of points for piecewise functions
   position_range: [-1, 1]              # Range of positions for piecewise functions
   anti_periodic: true                  # Whether to use anti-periodic boundary conditions
@@ -17,7 +17,7 @@ training:
   num_epochs: 1000                     # Number of training epochs
   batch_size: 1024                     # Batch size for training
   learning_rate: 0.001                 # Learning rate
-  optimizer: "adam"                    # Optimizer (adam or sgd)
+  optimizer: "lion"                    # Optimizer (lion, adam, or sgd)
   adapt_every: 50                      # Apply adaptation strategy every N epochs
   adapt_strategy: "global_error"       # Adaptation strategy (global_error or move_smoothest)
 

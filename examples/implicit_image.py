@@ -13,11 +13,12 @@ from PIL import Image
 import imageio
 from torch.utils.data import TensorDataset, DataLoader
 from matplotlib import image
+from lion_pytorch import Lion
 
 from non_uniform_piecewise_layers import AdaptivePiecewiseMLP
 from non_uniform_piecewise_layers.rotation_layer import fixed_rotation_layer
 from non_uniform_piecewise_layers.utils import largest_error
-
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +211,20 @@ def save_progress_image(model, inputs, original_image, epoch, loss, output_dir):
     plt.close()
 
 
+def generate_optimizer(parameters, learning_rate, name="lion"):
+    
+    if name.lower() == "lion":
+        return Lion(parameters, lr=learning_rate)
+    elif name.lower() == "adam":
+        return optim.Adam(parameters, lr=learning_rate)
+    elif name.lower() == "sgd":
+        return optim.SGD(parameters, lr=learning_rate)
+    else:
+        # Default to Lion
+        logger.warning(f"Unknown optimizer '{name}', using Lion as default")
+        return Lion(parameters, lr=learning_rate)
+
+
 @hydra.main(version_base=None, config_path="config", config_name="implicit_images")
 def main(cfg: DictConfig):
     # Log some useful information
@@ -250,13 +265,11 @@ def main(cfg: DictConfig):
     )
     
     # Create optimizer
-    if cfg.training.optimizer.lower() == "adam":
-        optimizer = optim.Adam(model.parameters(), lr=cfg.training.learning_rate)
-    elif cfg.training.optimizer.lower() == "sgd":
-        optimizer = optim.SGD(model.parameters(), lr=cfg.training.learning_rate)
-    else:
-        # Default to Adam
-        optimizer = optim.Adam(model.parameters(), lr=cfg.training.learning_rate)
+    optimizer = generate_optimizer(
+        parameters=model.parameters(),
+        learning_rate=cfg.training.learning_rate,
+        name=cfg.training.optimizer
+    )
     
     # Loss function
     criterion = nn.MSELoss()
@@ -297,11 +310,19 @@ def main(cfg: DictConfig):
             if cfg.training.adapt_strategy == "global_error":
                 model.global_error(error, position_data)
                 # Recreate optimizer after modifying the model
-                optimizer = optim.Adam(model.parameters(), lr=cfg.training.learning_rate)
+                optimizer = generate_optimizer(
+                    parameters=model.parameters(),
+                    learning_rate=cfg.training.learning_rate,
+                    name=cfg.training.optimizer
+                )
             elif cfg.training.adapt_strategy == "move_smoothest":
                 model.move_smoothest()
                 # Recreate optimizer after modifying the model
-                optimizer = optim.Adam(model.parameters(), lr=cfg.training.learning_rate)
+                optimizer = generate_optimizer(
+                    parameters=model.parameters(),
+                    learning_rate=cfg.training.learning_rate,
+                    name=cfg.training.optimizer
+                )
         
         # Save progress visualization
         if epoch % cfg.visualization.save_every == 0 or epoch == cfg.training.num_epochs - 1:
