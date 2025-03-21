@@ -1,0 +1,33 @@
+# CIFAR-100 Classification Configuration
+
+defaults:
+  - _self_
+
+# Configure Hydra
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: true
+
+seed: 42
+
+# Training parameters
+epochs: 100
+batch_size: 128
+learning_rate: 5e-4
+device: cuda  # 'cuda' or 'cpu'
+training_fraction: 1.0  # Fraction of training set to use (0.0-1.0)
+move_nodes: True
+test_interval: 10  # Evaluate on test set every N epochs
+
+# Model parameters
+max_points: 100
+adapt_frequency: 100
+num_points: 10
+model_type: 'adaptive'  # Options: 'adaptive', 'hybrid', 'standard'
+
+# TensorBoard settings
+tensorboard:
+  enabled: true
+  log_interval: 10  # Log metrics every N batches
