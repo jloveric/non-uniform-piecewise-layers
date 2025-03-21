@@ -14,7 +14,7 @@ seed: 42
 
 # Training parameters
 epochs: 100
-batch_size: 128
+batch_size: 4
 learning_rate: 5e-4
 device: cuda  # 'cuda' or 'cpu'
 training_fraction: 1.0  # Fraction of training set to use (0.0-1.0)
