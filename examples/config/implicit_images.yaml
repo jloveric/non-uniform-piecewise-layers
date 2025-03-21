@@ -2,7 +2,7 @@
 # This config is used by the implicit_image.py script
 
 # Path to the image file (relative to the project root)
-image_path: "high-order-implicit-representation/images/jupiter.jpg"  # Sample image from the repository
+image_path: "data_images/jupiter.jpg"  # Sample image from the repository
 
 # Model configuration
 model:
