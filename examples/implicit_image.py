@@ -373,6 +373,20 @@ def main(cfg: DictConfig):
     eval_batch_size = min(cfg.training.batch_size, 512)
     logger.info(f"Using evaluation batch size: {eval_batch_size}")
     
+    # Calculate how many batches to process before adaptation
+    # If adapt_every_n_batches is not in config, calculate from adapt_every epochs
+    if hasattr(cfg.training, 'adapt_every_n_batches'):
+        adapt_every_n_batches = cfg.training.adapt_every_n_batches
+    else:
+        # Calculate number of batches per epoch
+        batches_per_epoch = len(dataloader)
+        adapt_every_n_batches = cfg.training.adapt_every * batches_per_epoch
+        
+    logger.info(f"Adapting every {adapt_every_n_batches} batches")
+    
+    # Counter for batches processed
+    batch_counter = 0
+    
     # Training loop
     for epoch in range(cfg.training.num_epochs):
         total_loss = 0.0
@@ -393,6 +407,34 @@ def main(cfg: DictConfig):
             optimizer.step()
             
             total_loss += loss.item() * batch_inputs.size(0)
+            
+            # Increment batch counter
+            batch_counter += 1
+            
+            # Apply adaptation strategies every n batches
+            if batch_counter % adapt_every_n_batches == 0:
+                logger.info(f"Applying adaptation strategy after {batch_counter} batches")
+                # Get full predictions for adaptation
+                with torch.no_grad():
+                    full_predictions = batch_predict(model, device_position_data, batch_size=eval_batch_size)
+                    error = torch.abs(full_predictions - device_image_data)
+                    
+                if cfg.training.adapt_strategy == "global_error":
+                    model.global_error(error, device_position_data)
+                    # Recreate optimizer after modifying the model
+                    optimizer = generate_optimizer(
+                        parameters=model.parameters(),
+                        learning_rate=cfg.training.learning_rate,
+                        name=cfg.training.optimizer
+                    )
+                elif cfg.training.adapt_strategy == "move_smoothest":
+                    model.move_smoothest()
+                    # Recreate optimizer after modifying the model
+                    optimizer = generate_optimizer(
+                        parameters=model.parameters(),
+                        learning_rate=cfg.training.learning_rate,
+                        name=cfg.training.optimizer
+                    )
         
         # Calculate average loss for the epoch
         avg_loss = total_loss / len(dataset)
@@ -400,33 +442,9 @@ def main(cfg: DictConfig):
         # Log progress
         logger.info(f'Epoch {epoch+1}/{cfg.training.num_epochs}, Loss: {avg_loss:.6f}')
         
-        # Apply adaptation strategies
-        if epoch % cfg.training.adapt_every == 0:
-            # Get full predictions for adaptation
-            with torch.no_grad():
-                full_predictions = batch_predict(model, device_position_data, batch_size=eval_batch_size)
-                error = torch.abs(full_predictions - device_image_data)
-                
-            if cfg.training.adapt_strategy == "global_error":
-                model.global_error(error, device_position_data)
-                # Recreate optimizer after modifying the model
-                optimizer = generate_optimizer(
-                    parameters=model.parameters(),
-                    learning_rate=cfg.training.learning_rate,
-                    name=cfg.training.optimizer
-                )
-            elif cfg.training.adapt_strategy == "move_smoothest":
-                model.move_smoothest()
-                # Recreate optimizer after modifying the model
-                optimizer = generate_optimizer(
-                    parameters=model.parameters(),
-                    learning_rate=cfg.training.learning_rate,
-                    name=cfg.training.optimizer
-                )
-        
         # Save progress visualization
         if epoch % cfg.visualization.save_every == 0 or epoch == cfg.training.num_epochs - 1:
-            save_progress_image(model, device_position_data, original_image, epoch, avg_loss, os.getcwd(), batch_size=512)
+            save_progress_image(model, device_position_data, original_image, epoch, avg_loss, os.getcwd(), batch_size=eval_batch_size)
             images.append(imageio.imread(f'{os.getcwd()}/image_progress_{epoch:04d}.png'))
     
     # Save the final model
