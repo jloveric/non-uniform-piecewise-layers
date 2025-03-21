@@ -1,4 +1,5 @@
 import torch
+import math
 
 def fixed_rotation_layer(n: int, rotations: int = 2, normalize: bool = True):
     """
