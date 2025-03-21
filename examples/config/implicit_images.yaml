@@ -8,22 +8,23 @@ image_path: "high-order-implicit-representation/images/jupiter.jpg"  # Sample im
 model:
   hidden_layers: [64, 64]  # Sizes of hidden layers
   rotations: 2                         # Number of rotations in the rotation layer
-  num_points: 5                        # Initial number of points for piecewise functions
+  num_points: 20                        # Initial number of points for piecewise functions
   position_range: [-1, 1]              # Range of positions for piecewise functions
   anti_periodic: true                  # Whether to use anti-periodic boundary conditions
+  position_init: random
 
 # Training configuration
 training:
-  num_epochs: 1000                     # Number of training epochs
+  num_epochs: 10                     # Number of training epochs
   batch_size: 1024                     # Batch size for training
-  learning_rate: 0.001                 # Learning rate
-  optimizer: "lion"                    # Optimizer (lion, adam, or sgd)
-  adapt_every: 50                      # Apply adaptation strategy every N epochs
-  adapt_strategy: "global_error"       # Adaptation strategy (global_error or move_smoothest)
+  learning_rate: 0.0001                 # Learning rate
+  optimizer: lion                    # Optimizer (lion, adam, or sgd)
+  adapt_every: 1                      # Apply adaptation strategy every N epochs
+  adapt_strategy: move_smoothest #global_error       # Adaptation strategy (global_error or move_smoothest)
 
 # Visualization configuration
 visualization:
-  save_every: 20                       # Save progress image every N epochs
+  save_every: 1                       # Save progress image every N epochs
   gif_duration: 0.5                    # Duration of each frame in the progress GIF
 
 # Hydra configuration
@@ -33,3 +34,5 @@ hydra:
   sweep:
     dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
     subdir: ${hydra.job.num}
+  job:
+    chdir: True

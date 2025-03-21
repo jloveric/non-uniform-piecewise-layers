@@ -10,7 +10,7 @@ import hydra
 from hydra.core.hydra_config import HydraConfig
 import logging
 from PIL import Image
-import imageio
+import imageio.v2 as imageio
 from torch.utils.data import TensorDataset, DataLoader
 from matplotlib import image
 from lion_pytorch import Lion
@@ -27,7 +27,7 @@ torch.manual_seed(42)
 np.random.seed(42)
 
 
-def generate_mesh_grid(width, height, device="cpu", normalize=True):
+def generate_mesh_grid(width, height, device=None, normalize=True):
     """
     Generate a mesh grid of positions for an image.
     
@@ -42,11 +42,11 @@ def generate_mesh_grid(width, height, device="cpu", normalize=True):
     """
     # Create coordinate grids
     if normalize:
-        x_coords = torch.linspace(-1, 1, width, device=device)
-        y_coords = torch.linspace(-1, 1, height, device=device)
+        x_coords = torch.linspace(-1, 1, width)
+        y_coords = torch.linspace(-1, 1, height)
     else:
-        x_coords = torch.arange(width, device=device)
-        y_coords = torch.arange(height, device=device)
+        x_coords = torch.arange(width)
+        y_coords = torch.arange(height)
     
     # Create mesh grid
     y_grid, x_grid = torch.meshgrid(y_coords, x_coords, indexing='ij')
@@ -54,10 +54,14 @@ def generate_mesh_grid(width, height, device="cpu", normalize=True):
     # Reshape to [width*height, 2]
     positions = torch.stack([x_grid.flatten(), y_grid.flatten()], dim=1)
     
+    # Move to device if specified
+    if device is not None:
+        positions = positions.to(device)
+    
     return positions
 
 
-def image_to_dataset(filename, device="cpu"):
+def image_to_dataset(filename, device=None):
     """
     Read in an image file and return the flattened position input,
     flattened output and torch array of the original image.
@@ -90,27 +94,37 @@ def image_to_dataset(filename, device="cpu"):
         # Assume it's already normalized if not uint8
         torch_image_flat = torch_image.reshape(-1, 3)
     
-    return torch_image_flat, positions, torch_image
+    # Move to device if specified
+    if device is not None:
+        torch_image_flat = torch_image_flat.to(device)
+    
+    return torch_image_flat, positions, img
 
 
 class ImplicitImageNetwork(nn.Module):
-    def __init__(self, 
-                 input_dim=2, 
-                 output_dim=3, 
-                 hidden_layers=[64, 64, 64], 
-                 rotations=4, 
-                 num_points=5, 
-                 position_range=(-1, 1),
-                 anti_periodic=True):
+    """
+    Neural network for implicit image representation.
+    Uses a rotation layer followed by an adaptive MLP.
+    """
+    def __init__(
+        self,
+        input_dim=2,
+        output_dim=3,
+        hidden_layers=[64, 64],
+        rotations=4,
+        num_points=5,
+        position_range=(-1, 1),
+        anti_periodic=True,
+        position_init="random"
+    ):
         """
-        Neural network for implicit image representation.
-        First applies a rotation layer to the input coordinates, then passes through an adaptive MLP.
+        Initialize the network.
         
         Args:
-            input_dim: Input dimension (typically 2 for x,y coordinates)
+            input_dim: Dimension of input (typically 2 for x,y coordinates)
             output_dim: Output dimension (typically 3 for RGB values)
-            hidden_layers: List of hidden layer sizes for the MLP
-            rotations: Number of rotations to apply in the rotation layer
+            hidden_layers: List of hidden layer sizes
+            rotations: Number of rotations in the rotation layer
             num_points: Number of points for each piecewise function
             position_range: Range of positions for the piecewise functions
             anti_periodic: Whether to use anti-periodic boundary conditions
@@ -130,9 +144,10 @@ class ImplicitImageNetwork(nn.Module):
             width=mlp_widths,
             num_points=num_points,
             position_range=position_range,
-            anti_periodic=anti_periodic
+            anti_periodic=anti_periodic,
+            position_init=position_init
         )
-        
+    
     def forward(self, x):
         """
         Forward pass through the network.
@@ -151,12 +166,6 @@ class ImplicitImageNetwork(nn.Module):
         
         return x
     
-    def move_smoothest(self):
-        """
-        Move the smoothest point in the network to improve fitting.
-        """
-        self.mlp.move_smoothest()
-    
     def global_error(self, error, x):
         """
         Find the input x value that corresponds to the largest error and add a point there.
@@ -165,13 +174,75 @@ class ImplicitImageNetwork(nn.Module):
             error: Error tensor of shape (batch_size, output_dim)
             x: Input tensor of shape (batch_size, input_dim)
         """
-        new_value = largest_error(error, x)
+        # Make sure inputs are on the same device as the model
+        device = next(self.parameters()).device
+        if error.device != device:
+            error = error.to(device)
+        if x.device != device:
+            x = x.to(device)
+            
+        # Apply rotation to get the rotated positions
+        rotated_x = self.rotation_layer(x)
+        
+        # Find the largest error and add a point
+        new_value = largest_error(error, rotated_x)
         if new_value is not None:
             logger.debug(f'New value: {new_value}')
             self.mlp.remove_add(new_value)
+    
+    def move_smoothest(self):
+        """
+        Move the smoothest point in the network to improve fitting.
+        """
+        self.mlp.move_smoothest()
+    
+    @property
+    def device(self):
+        """
+        Get the device that the model parameters are on.
+        
+        Returns:
+            torch.device: The device of the model parameters
+        """
+        return next(self.parameters()).device
 
 
-def save_progress_image(model, inputs, original_image, epoch, loss, output_dir):
+def batch_predict(model, inputs, batch_size=1024):
+    """
+    Run predictions in batches to avoid memory issues.
+    
+    Args:
+        model: The model to use for predictions
+        inputs: Input tensor
+        batch_size: Batch size for predictions
+        
+    Returns:
+        Tensor of predictions
+    """
+    # Get total size and device
+    total_size = inputs.shape[0]
+    device = inputs.device
+    
+    # Get output dimension from a single prediction
+    with torch.no_grad():
+        sample_output = model(inputs[:1])
+    
+    # Prepare output tensor
+    output_dim = sample_output.shape[1]
+    outputs = torch.zeros(total_size, output_dim, device=device)
+    
+    # Process in batches
+    with torch.no_grad():
+        for i in range(0, total_size, batch_size):
+            end_idx = min(i + batch_size, total_size)
+            batch_inputs = inputs[i:end_idx]
+            batch_outputs = model(batch_inputs)
+            outputs[i:end_idx] = batch_outputs
+    
+    return outputs
+
+
+def save_progress_image(model, inputs, original_image, epoch, loss, output_dir, batch_size=512):
     """
     Save a plot showing the current state of the approximation and the original image.
     
@@ -182,9 +253,19 @@ def save_progress_image(model, inputs, original_image, epoch, loss, output_dir):
         epoch: Current epoch
         loss: Current loss value
         output_dir: Directory to save the image
+        batch_size: Batch size for prediction to avoid memory issues
     """
+    # Ensure model and inputs are on the same device
+    device = inputs.device
+    model_device = next(model.parameters()).device
+    if device != model_device:
+        inputs = inputs.to(model_device)
+    
     with torch.no_grad():
-        predictions = model(inputs)
+        predictions = batch_predict(model, inputs, batch_size=batch_size)
+    
+    # Move tensors to CPU for visualization
+    predictions = predictions.cpu()
     
     # Reshape predictions to image dimensions
     height, width = original_image.shape[:2]
@@ -233,6 +314,10 @@ def main(cfg: DictConfig):
     logger.info("\nConfiguration:")
     logger.info(OmegaConf.to_yaml(cfg))
     
+    # Set up device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logger.info(f"Using device: {device}")
+    
     # Get original working directory
     orig_cwd = hydra.utils.get_original_cwd()
     
@@ -240,9 +325,10 @@ def main(cfg: DictConfig):
     image_path = os.path.join(orig_cwd, cfg.image_path)
     logger.info(f"Loading image from: {image_path}")
     
-    # Convert image to dataset
+    # Convert image to dataset - keep data on CPU initially
     image_data, position_data, original_image = image_to_dataset(
-        filename=image_path
+        filename=image_path,
+        device=None  # Keep on CPU initially
     )
     
     # Create dataset and dataloader
@@ -250,7 +336,8 @@ def main(cfg: DictConfig):
     dataloader = DataLoader(
         dataset, 
         batch_size=cfg.training.batch_size, 
-        shuffle=True
+        shuffle=True,
+        pin_memory=(device.type == "cuda")  # Only pin memory if using CUDA
     )
     
     # Create model
@@ -261,8 +348,9 @@ def main(cfg: DictConfig):
         rotations=cfg.model.rotations,
         num_points=cfg.model.num_points,
         position_range=tuple(cfg.model.position_range),
-        anti_periodic=cfg.model.anti_periodic
-    )
+        anti_periodic=cfg.model.anti_periodic,
+        position_init=cfg.model.position_init
+    ).to(device)
     
     # Create optimizer
     optimizer = generate_optimizer(
@@ -277,12 +365,24 @@ def main(cfg: DictConfig):
     # Prepare for creating a GIF
     images = []
     
+    # Move full dataset to device for adaptation strategies
+    device_position_data = position_data.to(device)
+    device_image_data = image_data.to(device)
+    
+    # Set evaluation batch size (smaller than training batch size to save memory)
+    eval_batch_size = min(cfg.training.batch_size, 512)
+    logger.info(f"Using evaluation batch size: {eval_batch_size}")
+    
     # Training loop
     for epoch in range(cfg.training.num_epochs):
         total_loss = 0.0
         
         # Train with batches
         for batch_inputs, batch_targets in dataloader:
+            # Move data to device
+            batch_inputs = batch_inputs.to(device)
+            batch_targets = batch_targets.to(device)
+            
             # Forward pass
             outputs = model(batch_inputs)
             loss = criterion(outputs, batch_targets)
@@ -304,11 +404,11 @@ def main(cfg: DictConfig):
         if epoch % cfg.training.adapt_every == 0:
             # Get full predictions for adaptation
             with torch.no_grad():
-                full_predictions = model(position_data)
-                error = torch.abs(full_predictions - image_data)
+                full_predictions = batch_predict(model, device_position_data, batch_size=eval_batch_size)
+                error = torch.abs(full_predictions - device_image_data)
                 
             if cfg.training.adapt_strategy == "global_error":
-                model.global_error(error, position_data)
+                model.global_error(error, device_position_data)
                 # Recreate optimizer after modifying the model
                 optimizer = generate_optimizer(
                     parameters=model.parameters(),
@@ -326,7 +426,7 @@ def main(cfg: DictConfig):
         
         # Save progress visualization
         if epoch % cfg.visualization.save_every == 0 or epoch == cfg.training.num_epochs - 1:
-            save_progress_image(model, position_data, original_image, epoch, avg_loss, os.getcwd())
+            save_progress_image(model, device_position_data, original_image, epoch, avg_loss, os.getcwd(), batch_size=512)
             images.append(imageio.imread(f'{os.getcwd()}/image_progress_{epoch:04d}.png'))
     
     # Save the final model
