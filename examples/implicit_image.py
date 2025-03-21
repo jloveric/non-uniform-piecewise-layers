@@ -14,6 +14,7 @@ import imageio.v2 as imageio
 from torch.utils.data import TensorDataset, DataLoader
 from matplotlib import image
 from lion_pytorch import Lion
+from torch.utils.tensorboard import SummaryWriter
 
 from non_uniform_piecewise_layers import AdaptivePiecewiseMLP
 from non_uniform_piecewise_layers.rotation_layer import fixed_rotation_layer
@@ -115,7 +116,7 @@ class ImplicitImageNetwork(nn.Module):
         num_points=5,
         position_range=(-1, 1),
         anti_periodic=True,
-        position_init="random"
+        position_init='random'
     ):
         """
         Initialize the network.
@@ -129,7 +130,10 @@ class ImplicitImageNetwork(nn.Module):
             position_range: Range of positions for the piecewise functions
             anti_periodic: Whether to use anti-periodic boundary conditions
         """
-        super().__init__()
+        super(ImplicitImageNetwork, self).__init__()
+        
+        self.input_dim = input_dim
+        self.output_dim = output_dim
         
         # Create the rotation layer
         self.rotation_layer, rotation_output_dim = fixed_rotation_layer(
@@ -242,7 +246,7 @@ def batch_predict(model, inputs, batch_size=1024):
     return outputs
 
 
-def save_progress_image(model, inputs, original_image, epoch, loss, output_dir, batch_size=512):
+def save_progress_image(model, inputs, original_image, epoch, loss, output_dir, batch_size=512, writer=None):
     """
     Save a plot showing the current state of the approximation and the original image.
     
@@ -254,6 +258,7 @@ def save_progress_image(model, inputs, original_image, epoch, loss, output_dir, 
         loss: Current loss value
         output_dir: Directory to save the image
         batch_size: Batch size for prediction to avoid memory issues
+        writer: TensorBoard SummaryWriter for logging
     """
     # Ensure model and inputs are on the same device
     device = inputs.device
@@ -289,6 +294,20 @@ def save_progress_image(model, inputs, original_image, epoch, loss, output_dir, 
     
     plt.tight_layout()
     plt.savefig(f'{output_dir}/image_progress_{epoch:04d}.png')
+    
+    # Log to TensorBoard if writer is provided
+    if writer is not None:
+        # Convert the figure to a numpy array for TensorBoard
+        fig.canvas.draw()
+        fig_array = np.array(fig.canvas.renderer.buffer_rgba())
+        
+        # Log the comparison image
+        writer.add_image('Image Comparison', fig_array.transpose(2, 0, 1), epoch)
+        
+        # Also log the predicted image separately
+        pred_image_np = pred_image.detach().numpy().transpose(2, 0, 1)  # HWC to CHW
+        writer.add_image('Predicted Image', pred_image_np, epoch)
+    
     plt.close()
 
 
@@ -387,12 +406,33 @@ def main(cfg: DictConfig):
     # Counter for batches processed
     batch_counter = 0
     
+    # Create TensorBoard SummaryWriter
+    writer = SummaryWriter(log_dir=os.getcwd())
+    
+    # Log model graph to TensorBoard with a sample input
+    sample_input = torch.rand(1, position_data.shape[1], device=device)
+    writer.add_graph(model, sample_input)
+    
+    # Log hyperparameters to TensorBoard
+    hparams = {
+        'hidden_layers': str(cfg.model.hidden_layers),
+        'rotations': cfg.model.rotations,
+        'num_points': cfg.model.num_points,
+        'batch_size': cfg.training.batch_size,
+        'learning_rate': cfg.training.learning_rate,
+        'optimizer': cfg.training.optimizer,
+        'adapt_every_n_batches': adapt_every_n_batches,
+        'adapt_strategy': cfg.training.adapt_strategy
+    }
+    writer.add_hparams(hparams, {'hparam/dummy': 0})
+    
     # Training loop
     for epoch in range(cfg.training.num_epochs):
         total_loss = 0.0
+        batch_losses = []
         
         # Train with batches
-        for batch_inputs, batch_targets in dataloader:
+        for batch_idx, (batch_inputs, batch_targets) in enumerate(dataloader):
             # Move data to device
             batch_inputs = batch_inputs.to(device)
             batch_targets = batch_targets.to(device)
@@ -406,7 +446,13 @@ def main(cfg: DictConfig):
             loss.backward()
             optimizer.step()
             
-            total_loss += loss.item() * batch_inputs.size(0)
+            batch_loss = loss.item()
+            total_loss += batch_loss * batch_inputs.size(0)
+            batch_losses.append(batch_loss)
+            
+            # Log batch loss to TensorBoard
+            global_step = epoch * len(dataloader) + batch_idx
+            writer.add_scalar('Batch Loss', batch_loss, global_step)
             
             # Increment batch counter
             batch_counter += 1
@@ -418,6 +464,13 @@ def main(cfg: DictConfig):
                 with torch.no_grad():
                     full_predictions = batch_predict(model, device_position_data, batch_size=eval_batch_size)
                     error = torch.abs(full_predictions - device_image_data)
+                    
+                    # Log error histogram to TensorBoard
+                    writer.add_histogram('Error Distribution', error, global_step)
+                    
+                    # Log max error
+                    max_error = error.max().item()
+                    writer.add_scalar('Max Error', max_error, global_step)
                     
                 if cfg.training.adapt_strategy == "global_error":
                     model.global_error(error, device_position_data)
@@ -435,6 +488,10 @@ def main(cfg: DictConfig):
                         learning_rate=cfg.training.learning_rate,
                         name=cfg.training.optimizer
                     )
+                
+                # Log model parameter histograms
+                for name, param in model.named_parameters():
+                    writer.add_histogram(f'Parameters/{name}', param, global_step)
         
         # Calculate average loss for the epoch
         avg_loss = total_loss / len(dataset)
@@ -442,9 +499,12 @@ def main(cfg: DictConfig):
         # Log progress
         logger.info(f'Epoch {epoch+1}/{cfg.training.num_epochs}, Loss: {avg_loss:.6f}')
         
+        # Log epoch loss to TensorBoard
+        writer.add_scalar('Epoch Loss', avg_loss, epoch)
+        
         # Save progress visualization
         if epoch % cfg.visualization.save_every == 0 or epoch == cfg.training.num_epochs - 1:
-            save_progress_image(model, device_position_data, original_image, epoch, avg_loss, os.getcwd(), batch_size=eval_batch_size)
+            save_progress_image(model, device_position_data, original_image, epoch, avg_loss, os.getcwd(), batch_size=eval_batch_size, writer=writer)
             images.append(imageio.imread(f'{os.getcwd()}/image_progress_{epoch:04d}.png'))
     
     # Save the final model
@@ -454,6 +514,22 @@ def main(cfg: DictConfig):
     if len(images) > 1:
         imageio.mimsave(f'{os.getcwd()}/training_progress.gif', images, duration=cfg.visualization.gif_duration)
         logger.info(f"GIF of training progress saved to {os.getcwd()}/training_progress.gif")
+        
+        # Add GIF to TensorBoard
+        try:
+            # Read the GIF file
+            gif_path = f'{os.getcwd()}/training_progress.gif'
+            gif_frames = imageio.mimread(gif_path)
+            
+            # Convert frames to tensor format and log them
+            for i, frame in enumerate(gif_frames):
+                frame_tensor = torch.from_numpy(frame).permute(2, 0, 1)  # HWC to CHW
+                writer.add_image('Training Progress GIF', frame_tensor, i)
+        except Exception as e:
+            logger.warning(f"Could not add GIF to TensorBoard: {e}")
+    
+    # Close the TensorBoard writer
+    writer.close()
     
     logger.info("Training complete!")
 

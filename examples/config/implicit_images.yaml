@@ -6,7 +6,7 @@ image_path: "high-order-implicit-representation/images/jupiter.jpg"  # Sample im
 
 # Model configuration
 model:
-  hidden_layers: [64]  # Sizes of hidden layers
+  hidden_layers: [20]  # Sizes of hidden layers
   rotations: 2                         # Number of rotations in the rotation layer
   num_points: 100                        # Initial number of points for piecewise functions
   position_range: [-1, 1]              # Range of positions for piecewise functions
