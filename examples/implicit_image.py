@@ -149,7 +149,8 @@ class ImplicitImageNetwork(nn.Module):
             num_points=num_points,
             position_range=position_range,
             anti_periodic=anti_periodic,
-            position_init=position_init
+            position_init=position_init,
+            normalization="maxabs"
         )
     
     def forward(self, x):

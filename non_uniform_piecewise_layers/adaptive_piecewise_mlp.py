@@ -1,8 +1,16 @@
 import torch
 import torch.nn as nn
 from .adaptive_piecewise_linear import AdaptivePiecewiseLinear
-from typing import List
+from typing import List, Optional
+from non_uniform_piecewise_layers.utils import max_abs_normalization_last
 
+def noop(x):
+    return x
+
+norm_factory = {
+    "noop": noop,
+    "maxabs" :  max_abs_normalization_last
+}
 
 class AdaptivePiecewiseMLP(nn.Module):
     def __init__(
@@ -11,7 +19,8 @@ class AdaptivePiecewiseMLP(nn.Module):
         num_points: int = 3,
         position_range=(-1, 1),
         anti_periodic: bool = True,
-        position_init="uniform",
+        position_init: str="uniform",
+        normalization: str="noop" #maxabs
     ):
         """
         Initialize a multi-layer perceptron with adaptive piecewise linear layers.
@@ -54,6 +63,10 @@ class AdaptivePiecewiseMLP(nn.Module):
             ]
         )
 
+        # This is assuming we have a parameter free normalization! My favorite kind!
+        self.normalization = norm_factory[normalization]
+        
+
     def forward(self, x):
         """
         Forward pass through all layers.
@@ -65,8 +78,11 @@ class AdaptivePiecewiseMLP(nn.Module):
             torch.Tensor: Output tensor of shape (batch_size, output_width)
         """
         current = x
-        for layer in self.layers:
-            current = layer(current)
+        for layer in self.layers[:-1]:
+            current = self.normalization(layer(current))
+
+        # We don't normalize the last layer, we leave that to the user!
+        current = self.layers[-1](current)
         return current
 
     def largest_error(self, error, x):
@@ -105,9 +121,11 @@ class AdaptivePiecewiseMLP(nn.Module):
             # Forward pass to get intermediate values
             intermediate_x = [x]
             current_x = x
-            for layer in self.layers:
-                current_x = layer(current_x)
+            for layer in self.layers[:-1]:
+                current_x = self.normalization(layer(current_x))
                 intermediate_x.append(current_x)
+            current_x = self.layers[-1](current_x)
+            intermediate_x.append(current_x)
 
             # Try inserting points in each layer
             success = True
