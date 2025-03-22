@@ -148,9 +148,11 @@ class AdaptivePiecewiseMLP(nn.Module):
             # Forward pass to get intermediate values
             intermediate_x = [x]
             current_x = x
-            for layer in self.layers:
-                current_x = layer(current_x)
+            for layer in self.layers[:-1]:
+                current_x = self.normalization(layer(current_x))
                 intermediate_x.append(current_x)
+            current_x = self.layers[-1](current_x)
+            intermediate_x.append(current_x)
 
             # Try inserting nearby points in each layer
             success = True
@@ -176,9 +178,11 @@ class AdaptivePiecewiseMLP(nn.Module):
             # Forward pass to get intermediate values
             intermediate_x = [x]
             current_x = x
-            for layer in self.layers:
-                current_x = layer(current_x)
+            for layer in self.layers[:-1]:
+                current_x = self.normalization(layer(current_x))
                 intermediate_x.append(current_x)
+            current_x = self.layers[-1](current_x)
+            intermediate_x.append(current_x)
 
             # Try removing and adding points in each layer
             success = True
