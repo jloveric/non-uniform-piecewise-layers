@@ -254,7 +254,9 @@ class AdaptivePiecewiseLinear(nn.Module):
             bool: True if a point was inserted, False otherwise
                  (e.g., if there are only 2 points).
         """
-        point = make_antiperiodic(point)
+        if self.anti_periodic is True:
+            point = make_antiperiodic(point)
+
         with torch.no_grad():
             # Ensure point has correct shape (num_inputs,)
             if point is None:
@@ -992,8 +994,9 @@ class AdaptivePiecewiseLinear(nn.Module):
             self.values.data = new_values
             
             # Return the number of pairs moved and the total number of pairs
-            moved_pairs = valid_count
+            
             total_pairs = self.num_inputs * self.num_outputs
+            moved_pairs = total_pairs
             return moved_pairs, total_pairs
             
     def move_smoothest_threshold(self, weighted:bool=True, threshold:float=0.5):
