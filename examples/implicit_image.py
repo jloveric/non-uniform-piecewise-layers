@@ -467,11 +467,11 @@ def main(cfg: DictConfig):
                     error = torch.abs(full_predictions - device_image_data)
                     
                     # Log error histogram to TensorBoard
-                    writer.add_histogram('Error Distribution', error, global_step)
+                    #writer.add_histogram('Error Distribution', error, global_step)
                     
                     # Log max error
                     max_error = error.max().item()
-                    writer.add_scalar('Max Error', max_error, global_step)
+                    #writer.add_scalar('Max Error', max_error, global_step)
                     
                 if cfg.training.adapt_strategy == "global_error":
                     model.global_error(error, device_position_data)
