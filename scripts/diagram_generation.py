@@ -11,10 +11,10 @@ def create_test_function():
     """Create a test function for visualization."""
     # Define a simple function to approximate
     def func(x):
-        return torch.cos(1/(torch.abs(x)+0.05))
+        return torch.cos(1/(torch.abs(x)+0.075))
     
     # Create input data
-    x = torch.linspace(-1, 1, 200).reshape(-1, 1)
+    x = torch.linspace(-1, 1, 1000).reshape(-1, 1)
     y = func(x)
     
     return x, y
@@ -109,31 +109,59 @@ def visualize_move_smoothest(model, x, y, output_path=None):
         
         # Evaluate the model with the point removed
         y_pred_removed = model_removed(x)
+        
+        # Create a copy of the model with the max error point removed
+        model_max_removed = AdaptivePiecewiseLinear(1, 1, model.num_points - 1)
+        
+        # Create mask for all points except the max error one
+        max_keep_mask = torch.ones(model.num_points, dtype=torch.bool)
+        max_keep_mask[max_error_point_idx] = False
+        
+        # Copy positions and values, excluding the max error point
+        model_max_removed.positions = model.positions[:, :, max_keep_mask].clone()
+        model_max_removed.values = nn.Parameter(model.values[:, :, max_keep_mask].clone())
+        
+        # Evaluate the model with the max error point removed
+        y_pred_max_removed = model_max_removed(x)
     
     # Plot function with smoothest point removed
     axes[1].plot(x.detach().numpy(), y.detach().numpy(), 'b-', label='True Function', alpha=0.7)
     axes[1].plot(x.detach().numpy(), y_pred_original.detach().numpy(), 'r--', label='Original Approximation', alpha=0.4)
-    axes[1].plot(x.detach().numpy(), y_pred_removed.detach().numpy(), 'g--', label='Approximation with Point Removed')
+    axes[1].plot(x.detach().numpy(), y_pred_removed.detach().numpy(), 'g--', label='Approximation with Min Error Point Removed')
+    axes[1].plot(x.detach().numpy(), y_pred_max_removed.detach().numpy(), 'c--', label='Approximation with Max Error Point Removed')
     
     # Plot all original points
     axes[1].scatter(positions_original.detach().numpy(), values_original.detach().numpy(), c='gray', s=80, alpha=0.5, label='Original Points')
     
-    # Highlight the removed point
+    # Highlight the removed points
     removed_pos = positions_original[smoothest_point_idx].item()
     removed_val = values_original[smoothest_point_idx].item()
-    axes[1].scatter([removed_pos], [removed_val], c='r', s=150, label=f'Removed Point (Min Error: {min_error:.4f})')
+    axes[1].scatter([removed_pos], [removed_val], c='r', s=150, label=f'Min Error Point (Error: {min_error:.4f})')
     
-    # Shade the area between the curves to show removal error
+    # Highlight the max error point
+    max_error_pos = positions_original[max_error_point_idx].item()
+    max_error_val = values_original[max_error_point_idx].item()
+    axes[1].scatter([max_error_pos], [max_error_val], c='orange', s=150, label=f'Max Error Point (Error: {max_error:.4f})')
+    
+    # Shade the area between the curves to show removal error for min error point
     x_np = x.detach().numpy().flatten()
     y_original = y_pred_original.detach().numpy().flatten()
     y_removed = y_pred_removed.detach().numpy().flatten()
+    y_max_removed = y_pred_max_removed.detach().numpy().flatten()
     
-    # Create a custom colormap that goes from light to medium blue
-    colors = [(0.8, 0.8, 1.0), (0.5, 0.5, 1.0)]
-    cmap = LinearSegmentedColormap.from_list('custom_blue', colors, N=100)
+    # Create custom colormaps
+    colors_blue = [(0.8, 0.8, 1.0), (0.5, 0.5, 1.0)]
+    colors_orange = [(1.0, 0.9, 0.8), (1.0, 0.7, 0.4)]
+    cmap_blue = LinearSegmentedColormap.from_list('custom_blue', colors_blue, N=100)
+    cmap_orange = LinearSegmentedColormap.from_list('custom_orange', colors_orange, N=100)
     
+    # Fill between for min error point (blue)
     axes[1].fill_between(x_np, y_original, y_removed, where=(y_original != y_removed), 
-                         alpha=0.3, color='blue', label='Removal Error')
+                         alpha=0.3, color='blue', label='Min Error Removal Error')
+    
+    # Fill between for max error point (orange)
+    axes[1].fill_between(x_np, y_original, y_max_removed, where=(y_original != y_max_removed), 
+                         alpha=0.3, color='orange', label='Max Error Removal Error')
     
     axes[1].set_title('Function Approximation with Smoothest Point Removed')
     axes[1].legend()
