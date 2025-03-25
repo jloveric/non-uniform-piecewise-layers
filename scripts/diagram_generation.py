@@ -61,7 +61,7 @@ def visualize_move_smoothest(model, x, y, output_path=None):
         output_path: Path to save the visualization
     """
     # Create a figure with 3 subplots
-    fig, axes = plt.subplots(3, 1, figsize=(10, 15), dpi=100)
+    fig, axes = plt.subplots(3, 1, figsize=(8, 12), dpi=100)
     
     # 1. Original function approximation
     with torch.no_grad():
@@ -76,10 +76,10 @@ def visualize_move_smoothest(model, x, y, output_path=None):
     axes[0].plot(x.detach().numpy(), y_pred_original.detach().numpy(), 'r--', label='Piecewise Linear Approximation')
     axes[0].scatter(positions_original.detach().numpy(), values_original.detach().numpy(), c='g', s=100, label='Control Points')
     axes[0].set_title('Original Function Approximation')
-    axes[0].set_xlabel('x')
-    axes[0].set_ylabel('y')
     axes[0].legend()
-    axes[0].grid(True)
+    # Remove axis labels and grid
+    axes[0].set_xticks([])
+    axes[0].set_yticks([])
     
     # 2. Compute removal errors and identify smoothest point
     with torch.no_grad():
@@ -136,10 +136,10 @@ def visualize_move_smoothest(model, x, y, output_path=None):
                          alpha=0.3, color='blue', label='Removal Error')
     
     axes[1].set_title('Function Approximation with Smoothest Point Removed')
-    axes[1].set_xlabel('x')
-    axes[1].set_ylabel('y')
     axes[1].legend()
-    axes[1].grid(True)
+    # Remove axis labels and grid
+    axes[1].set_xticks([])
+    axes[1].set_yticks([])
     
     # 3. Apply move_smoothest to get the final result
     with torch.no_grad():
@@ -190,12 +190,13 @@ def visualize_move_smoothest(model, x, y, output_path=None):
         axes[2].scatter([new_pos], [new_val], c='g', s=150, label='Newly Inserted Point')
     
     axes[2].set_title('Final Function Approximation After move_smoothest')
-    axes[2].set_xlabel('x')
-    axes[2].set_ylabel('y')
     axes[2].legend()
-    axes[2].grid(True)
+    # Remove axis labels and grid
+    axes[2].set_xticks([])
+    axes[2].set_yticks([])
     
-    plt.tight_layout()
+    # Add more space between subplots
+    plt.tight_layout(pad=3.0)
     
     if output_path:
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
