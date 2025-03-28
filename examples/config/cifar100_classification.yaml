@@ -13,19 +13,21 @@ hydra:
 seed: 42
 
 # Training parameters
-epochs: 100
-batch_size: 4
-learning_rate: 5e-4
+epochs: 200
+batch_size: 32
+learning_rate: 1e-5
 device: cuda  # 'cuda' or 'cpu'
 training_fraction: 1.0  # Fraction of training set to use (0.0-1.0)
-move_nodes: True
+adapt: move # reset, null
 test_interval: 10  # Evaluate on test set every N epochs
 
 # Model parameters
 max_points: 100
 adapt_frequency: 100
-num_points: 10
-model_type: 'adaptive'  # Options: 'adaptive', 'hybrid', 'standard'
+num_points: 25
+model_type: adaptive  # Options: 'adaptive', 'hybrid', 'standard'
+# The number of output channels in the first convlayer, the following ones are channels*2 and channels*4
+channels: 16 
 
 # TensorBoard settings
 tensorboard:
