@@ -13,7 +13,7 @@ from non_uniform_piecewise_layers.efficient_adaptive_piecewise_conv import (
     EfficientAdaptivePiecewiseConv2d,
 )
 from non_uniform_piecewise_layers.adaptive_piecewise_conv import AdaptivePiecewiseConv2d
-
+import torch.testing as testing
 
 class TestPiecewiseLinearExpansion2d(unittest.TestCase):
     """Test cases for the PiecewiseLinearExpansion2d class."""
@@ -153,6 +153,74 @@ class TestEfficientAdaptivePiecewiseConv2d(unittest.TestCase):
         expected_shape = (batch_size, out_channels, height, width)
         self.assertEqual(output.shape, expected_shape)
     
+    def test_conv_values_simple(self):
+        """Test the full convolution output with known weights and simple input."""
+        # Input tensor (1 batch, 1 channel, 2x2)
+        x = torch.tensor([[[[0.0, 1.0], [0.5, -0.5]]]], dtype=torch.float32)
+        
+        # Layer parameters
+        in_channels = 1
+        out_channels = 1
+        kernel_size = 1
+        num_points = 3
+        
+        # Create the layer
+        conv_layer = EfficientAdaptivePiecewiseConv2d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            num_points=num_points,
+            position_init="uniform", # Positions will be [-1, 0, 1]
+            padding=0 # No padding needed for 1x1 kernel
+        )
+        
+        # Manually set weights to ones
+        # Shape: (out_channels, in_channels * num_points, ks, ks) = (1, 1*3, 1, 1)
+        conv_layer.conv.weight.data = torch.ones((1, 3, 1, 1), dtype=torch.float32)
+        
+        # --- Calculate Expected Output ---
+        # 1. Expansion positions: [-1.0, 0.0, 1.0]
+        # 2. Expected expanded tensor (calculated based on implementation):
+        #    x=0.0  -> [0.0, 1.0, 0.0] * 0.0  = [0.0, 0.0, 0.0]
+        #    x=1.0  -> [0.0, 0.0, 1.0] * 1.0  = [0.0, 0.0, 1.0]
+        #    x=0.5  -> [0.0, 0.5, 0.5] * 0.5  = [0.0, 0.25, 0.25]
+        #    x=-0.5 -> [0.5, 0.5, 0.0] * -0.5 = [-0.25, -0.25, 0.0]
+        # Expanded tensor shape: (1, 3, 2, 2)
+        # expanded = torch.tensor([[[
+        #     [ 0.00,  0.00],  # Basis -1
+        #     [ 0.00, -0.25]
+        # ],[
+        #     [ 0.00,  0.00],  # Basis 0
+        #     [ 0.25, -0.25]
+        # ],[
+        #     [ 0.00,  1.00],  # Basis 1
+        #     [ 0.25,  0.00]
+        # ]]], dtype=torch.float32)
+        
+        # 3. Apply 1x1 convolution with weights = [1, 1, 1]
+        #    Output[h, w] = sum(Expanded[:, h, w])
+        #    Output[0, 0] = 0.0 + 0.0 + 0.0 = 0.0
+        #    Output[0, 1] = 0.0 + 0.0 + 1.0 = 1.0
+        #    Output[1, 0] = 0.0 + 0.25 + 0.25 = 0.5
+        #    Output[1, 1] = -0.25 + (-0.25) + 0.0 = -0.5
+        expected_output = torch.tensor([[[[0.0, 1.0], [0.5, -0.5]]]], dtype=torch.float32)
+
+        # --- Get Actual Output ---
+        actual_output = conv_layer(x)
+        
+        # Print for debugging
+        print("Input Tensor:")
+        print(x)
+        # print("Expanded Tensor (Manual):") # Uncomment if needed
+        # print(expanded)                     # Uncomment if needed
+        print("Expected Output:")
+        print(expected_output)
+        print("Actual Output:")
+        print(actual_output)
+        
+        # --- Compare ---
+        testing.assert_close(actual_output, expected_output, rtol=1e-5, atol=1e-5)
+
     def test_conv_gradient(self):
         """Test that gradients flow through the convolution layer."""
         batch_size = 2
@@ -185,38 +253,8 @@ class TestEfficientAdaptivePiecewiseConv2d(unittest.TestCase):
         # Check that gradients were computed
         self.assertIsNotNone(x.grad)
         self.assertFalse(torch.isnan(x.grad).any())
-    
-    def test_anti_periodic(self):
-        """Test that anti-periodic boundary conditions work correctly."""
-        batch_size = 2
-        in_channels = 3
-        out_channels = 6
-        height = 8
-        width = 8
-        kernel_size = (3, 3)
-        num_points = 5
-        
-        # Create input tensor
-        x = torch.randn(batch_size, in_channels, height, width)
-        
-        # Create convolution layer with anti-periodic boundary conditions and explicit padding='same'
-        conv = EfficientAdaptivePiecewiseConv2d(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            kernel_size=kernel_size,
-            num_points=num_points,
-            anti_periodic=True,
-            padding='same'
-        )
-        
-        # Apply convolution
-        output = conv(x)
-        
-        # Check that output is not None and has the expected number of dimensions
-        self.assertIsNotNone(output)
-        self.assertEqual(len(output.shape), 4)
-        self.assertEqual(output.shape[0], batch_size)
-        self.assertEqual(output.shape[1], out_channels)
+        self.assertFalse(torch.isnan(conv.conv.weight.grad).any())
+
     
     def test_expansion_and_conv_separately(self):
         """Test that the expansion followed by convolution works as expected."""

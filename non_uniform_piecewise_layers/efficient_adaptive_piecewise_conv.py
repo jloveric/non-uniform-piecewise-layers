@@ -200,7 +200,6 @@ class EfficientAdaptivePiecewiseConv2d(nn.Module):
         num_points=3,
         position_range=(-1, 1),
         position_init="uniform",
-        anti_periodic: bool = True,
     ):
         """
         Efficient 2D convolutional layer using adaptive piecewise linear functions.
@@ -274,9 +273,6 @@ class EfficientAdaptivePiecewiseConv2d(nn.Module):
         Returns:
             torch.Tensor: Output tensor of shape (batch_size, out_channels, out_height, out_width)
         """
-        # Apply anti-periodic boundary conditions if needed
-        if self.anti_periodic:
-            x = self._make_antiperiodic(x)
             
         # Expand the input using piecewise linear basis functions
         expanded = self.expansion(x)
@@ -286,35 +282,6 @@ class EfficientAdaptivePiecewiseConv2d(nn.Module):
         
         return output
     
-    def _make_antiperiodic(self, x):
-        """
-        Apply anti-periodic boundary conditions to the input tensor.
-        
-        Args:
-            x (torch.Tensor): Input tensor
-            
-        Returns:
-            torch.Tensor: Tensor with anti-periodic boundary conditions applied
-        """
-        # Map values outside the position range to within the range with anti-periodic boundary conditions
-        min_val, max_val = self.position_range
-        range_size = max_val - min_val
-        
-        # Shift to [0, range_size]
-        x_shifted = x - min_val
-        
-        # Apply modulo to handle values outside the range
-        x_mod = torch.fmod(x_shifted, range_size)
-        
-        # Handle negative values after modulo
-        x_mod = torch.where(x_mod < 0, x_mod + range_size, x_mod)
-        
-        # Apply anti-periodic condition: reflect values in the second half of the range
-        mask = x_mod > range_size / 2
-        x_mod = torch.where(mask, range_size - x_mod, x_mod)
-        
-        # Shift back to original range
-        return x_mod + min_val
     
     def move_smoothest(self, weighted: bool = True):
         """
