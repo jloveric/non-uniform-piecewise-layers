@@ -6,7 +6,7 @@ from torchvision import datasets, transforms
 import matplotlib.pyplot as plt
 import os
 import numpy as np
-from non_uniform_piecewise_layers import AdaptivePiecewiseConv2d
+from non_uniform_piecewise_layers import EfficientAdaptivePiecewiseConv2d
 from non_uniform_piecewise_layers.adaptive_piecewise_linear import (
     AdaptivePiecewiseLinear,
 )
@@ -42,19 +42,19 @@ class AdaptiveConvNet(nn.Module):
         self.layer_2_channels = 2*self.channels
         self.layer_3_channels = 2*self.layer_2_channels
 
-        self.conv1 = AdaptivePiecewiseConv2d(
+        self.conv1 = EfficientAdaptivePiecewiseConv2d(
             3, self.channels, kernel_size=3, num_points=num_points, position_init=position_init
         )
         self.pool1 = nn.MaxPool2d(2)
 
         # Second convolutional layer: 32 input channels, 64 output channels
-        self.conv2 = AdaptivePiecewiseConv2d(
+        self.conv2 = EfficientAdaptivePiecewiseConv2d(
             self.channels, self.layer_2_channels, kernel_size=3, num_points=num_points, position_init=position_init
         )
         self.pool2 = nn.MaxPool2d(2)
 
         # Third convolutional layer: 64 input channels, 128 output channels
-        self.conv3 = AdaptivePiecewiseConv2d(
+        self.conv3 = EfficientAdaptivePiecewiseConv2d(
             self.layer_2_channels, self.layer_3_channels, kernel_size=3, num_points=num_points, position_init=position_init
         )
         self.pool3 = nn.MaxPool2d(2)

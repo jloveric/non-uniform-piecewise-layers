@@ -4,4 +4,4 @@ from .adaptive_piecewise_mlp import AdaptivePiecewiseMLP
 from .adaptive_piecewise_conv import AdaptivePiecewiseConv2d
 
 
-__all__ = ['NonUniformPiecewiseLinear', 'AdaptivePiecewiseLinear', 'AdaptivePiecewiseMLP', 'AdaptivePiecewiseConv2d']
+__all__ = ['NonUniformPiecewiseLinear', 'AdaptivePiecewiseLinear', 'AdaptivePiecewiseMLP', 'AdaptivePiecewiseConv2d','EfficientAdaptivePiecewiseConv2d']

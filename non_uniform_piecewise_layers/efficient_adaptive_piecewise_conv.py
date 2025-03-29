@@ -215,7 +215,6 @@ class EfficientAdaptivePiecewiseConv2d(nn.Module):
             num_points (int): Number of points per piecewise function. Default: 3
             position_range (tuple): Tuple of (min, max) for allowed position range. Default: (-1, 1)
             position_init (str): Position initialization method. Must be one of ["uniform", "random"]. Default is "uniform"
-            anti_periodic (bool): Whether to use anti-periodic boundary conditions. Default is True
         """
         super().__init__()
 
@@ -235,7 +234,6 @@ class EfficientAdaptivePiecewiseConv2d(nn.Module):
         self.kernel_size = kernel_size
         self.stride = stride
         self.padding = padding
-        self.anti_periodic = anti_periodic
         self.position_range = position_range
         
         # Create the expansion layer
@@ -253,15 +251,13 @@ class EfficientAdaptivePiecewiseConv2d(nn.Module):
             kernel_size=kernel_size,
             stride=stride,
             padding=padding,
-            bias=False,
+            bias=False, #No bias, this is effectively handled per element
         )
         
         # Initialize the weights with a small random value
         # The factor is similar to what's used in AdaptivePiecewiseLinear
         factor = 0.5 * math.sqrt(1.0 / (3 * in_channels * kernel_size[0] * kernel_size[1]))
         self.conv.weight.data.uniform_(-factor, factor)
-        if self.conv.bias is not None:
-            self.conv.bias.data.zero_()
 
     def forward(self, x):
         """

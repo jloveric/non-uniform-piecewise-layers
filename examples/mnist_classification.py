@@ -6,7 +6,7 @@ from torchvision import datasets, transforms
 import matplotlib.pyplot as plt
 import os
 import numpy as np
-from non_uniform_piecewise_layers import AdaptivePiecewiseConv2d
+from non_uniform_piecewise_layers import EfficientAdaptivePiecewiseConv2d
 from non_uniform_piecewise_layers.adaptive_piecewise_linear import AdaptivePiecewiseLinear
 from lion_pytorch import Lion
 import hydra
@@ -28,11 +28,11 @@ class AdaptiveConvNet(nn.Module):
     def __init__(self, num_points=3):
         super().__init__()
         # First convolutional layer: 1 input channel, 4 output channels
-        self.conv1 = AdaptivePiecewiseConv2d(1, 4, kernel_size=3, num_points=num_points)
+        self.conv1 = EfficientAdaptivePiecewiseConv2d(1, 4, kernel_size=3, num_points=num_points)
         self.pool1 = nn.MaxPool2d(2)
         
         # Second convolutional layer: 4 input channels, 8 output channels
-        self.conv2 = AdaptivePiecewiseConv2d(4, 8, kernel_size=3, num_points=num_points)
+        self.conv2 = EfficientAdaptivePiecewiseConv2d(4, 8, kernel_size=3, num_points=num_points)
         self.pool2 = nn.MaxPool2d(2)
         
         # Calculate the size of flattened features

@@ -255,7 +255,70 @@ class TestEfficientAdaptivePiecewiseConv2d(unittest.TestCase):
         self.assertFalse(torch.isnan(x.grad).any())
         self.assertFalse(torch.isnan(conv.conv.weight.grad).any())
 
-    
+    def test_conv_values_2x2_kernel_vs_separate(self):
+        """Test the full convolution output with a 2x2 kernel against separate components."""
+        # Set random seed for reproducibility
+        torch.manual_seed(123)
+        
+        # Input tensor (1 batch, 1 channel, 4x4)
+        x = torch.randn((1, 1, 4, 4), dtype=torch.float32)
+        
+        # Layer parameters
+        in_channels = 1
+        out_channels = 1
+        kernel_size = 2
+        num_points = 3
+        padding = 1 # Explicit padding
+        
+        # 1. Create the efficient layer
+        efficient_conv = EfficientAdaptivePiecewiseConv2d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            num_points=num_points,
+            position_init="uniform", # Positions will be [-1, 0, 1]
+            padding=padding
+        )
+        
+        # 2. Create separate expansion and conv layers
+        expansion = PiecewiseLinearExpansion2d(num_points=num_points, position_init="uniform")
+        separate_conv = nn.Conv2d(
+            in_channels=in_channels * num_points,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            padding=padding,
+            bias=False # Match efficient layer default
+        )
+        
+        # 3. Ensure weights and positions are identical
+        # Use random weights for a more robust test than all ones
+        efficient_conv.conv.weight.data = torch.randn_like(efficient_conv.conv.weight.data)
+        separate_conv.weight.data = efficient_conv.conv.weight.data.clone()
+        # Positions are already identical due to "uniform" init, but explicit copy is safer
+        expansion.positions = efficient_conv.expansion.positions.clone()
+        
+        # 4. Calculate output from efficient layer
+        efficient_output = efficient_conv(x)
+        
+        # 5. Calculate output from separate components
+        expanded_output = expansion(x)
+        separate_output = separate_conv(expanded_output)
+        
+        # Print shapes for debugging
+        print(f"Input shape: {x.shape}")
+        print(f"Expanded shape: {expanded_output.shape}")
+        print(f"Efficient Output shape: {efficient_output.shape}")
+        print(f"Separate Output shape: {separate_output.shape}")
+
+        # 6. Compare outputs
+        testing.assert_close(
+            efficient_output, 
+            separate_output, 
+            rtol=1e-5, 
+            atol=1e-5,
+            msg="Output mismatch between efficient layer and separate components for 2x2 kernel"
+        )
+
     def test_expansion_and_conv_separately(self):
         """Test that the expansion followed by convolution works as expected."""
         # Set random seed for reproducibility
