@@ -1,0 +1,36 @@
+defaults:
+  - _self_
+
+# Configure Hydra
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: true
+
+data:
+  grid_size: 10  # Number of points along each dimension for visualization
+  range_min: -1.0
+  range_max: 1.0
+  hypersphere:
+    radius: 0.5
+    center: null  # Center of the hypersphere, null means [0, 0, 0, 0]
+
+model:
+  num_points: 20
+  position_range: [-1, 1]
+  weight_init: "linear"
+
+training:
+  num_epochs: 300
+  learning_rate: 0.01
+  optimizer: "lion"  # Options: "lion", "adam", "sgd"
+  adapt: "move"  # Options: "move", "global_error"
+  adapt_interval: 10
+  weighted: true
+  move_threshold: 0.1
+
+visualization:
+  plot_interval: 20  # Save plots every N epochs
+  gif_duration: 0.5  # Duration for each frame in GIFs
+  dpi: 100  # Resolution for saved images (lower values use less memory)
