@@ -200,6 +200,7 @@ class EfficientAdaptivePiecewiseConv2d(nn.Module):
         num_points=3,
         position_range=(-1, 1),
         position_init="uniform",
+        weight_init="random",
     ):
         """
         Efficient 2D convolutional layer using adaptive piecewise linear functions.
@@ -215,6 +216,9 @@ class EfficientAdaptivePiecewiseConv2d(nn.Module):
             num_points (int): Number of points per piecewise function. Default: 3
             position_range (tuple): Tuple of (min, max) for allowed position range. Default: (-1, 1)
             position_init (str): Position initialization method. Must be one of ["uniform", "random"]. Default is "uniform"
+            weight_init (str): Weight initialization method. Must be one of ["random", "linear"]. Default is "random"
+                - "random": Initialize weights with uniform random values
+                - "linear": Initialize weights to follow a linear pattern for each filter/channel
         """
         super().__init__()
 
@@ -228,6 +232,8 @@ class EfficientAdaptivePiecewiseConv2d(nn.Module):
             padding = (padding, padding)
         if num_points < 2:
             raise ValueError(f"num_points must be at least 2, got {num_points}")
+        if weight_init not in ["random", "linear"]:
+            raise ValueError(f"weight_init must be one of ['random', 'linear'], got {weight_init}")
 
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -235,6 +241,7 @@ class EfficientAdaptivePiecewiseConv2d(nn.Module):
         self.stride = stride
         self.padding = padding
         self.position_range = position_range
+        self.weight_init = weight_init
         
         # Create the expansion layer
         self.expansion = PiecewiseLinearExpansion2d(
@@ -254,10 +261,52 @@ class EfficientAdaptivePiecewiseConv2d(nn.Module):
             bias=False, #No bias, this is effectively handled per element
         )
         
-        # Initialize the weights with a small random value
+        # Initialize the weights based on the specified method
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        """
+        Initialize the weights of the convolutional layer based on the specified method.
+        """
         # The factor is similar to what's used in AdaptivePiecewiseLinear
-        factor = 0.5 * math.sqrt(1.0 / (3 * in_channels * kernel_size[0] * kernel_size[1]))
-        self.conv.weight.data.uniform_(-factor, factor)
+        factor = 0.5 * math.sqrt(1.0 / (3 * self.in_channels * self.kernel_size[0] * self.kernel_size[1]))
+        
+        if self.weight_init == "random":
+            # Initialize with uniform random values
+            self.conv.weight.data.uniform_(-factor, factor)
+        else:  # linear
+            # Initialize each filter/channel with a random line (collinear points)
+            # Similar to AdaptivePiecewiseLinear initialization
+            positions = self.expansion.positions
+            num_points = positions.size(0)
+            
+            # Reshape weights to separate in_channels and points dimensions
+            # [out_channels, in_channels, num_points, kernel_height, kernel_width]
+            weights_shape = (self.out_channels, self.in_channels, num_points, *self.kernel_size)
+            weights_reshaped = self.conv.weight.data.view(weights_shape)
+            
+            # For each output channel and input channel, initialize weights to follow a linear pattern
+            for out_idx in range(self.out_channels):
+                for in_idx in range(self.in_channels):
+                    # Generate random start and end values for the linear function
+                    start = torch.empty(1).uniform_(-factor, factor).item()
+                    end = torch.empty(1).uniform_(-factor, factor).item()
+                    
+                    # Calculate the slope and intercept of the linear function
+                    pos_min, pos_max = self.position_range
+                    slope = (end - start) / (pos_max - pos_min)
+                    intercept = start - slope * pos_min
+                    
+                    # Set weights to follow the linear function for all kernel positions
+                    for p_idx in range(num_points):
+                        pos = positions[p_idx].item()
+                        value = slope * pos + intercept
+                        
+                        # Set the same value for all kernel positions
+                        weights_reshaped[out_idx, in_idx, p_idx] = value
+            
+            # Update the weights
+            self.conv.weight.data = weights_reshaped.view(self.conv.weight.shape)
 
     def forward(self, x):
         """

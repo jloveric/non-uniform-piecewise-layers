@@ -541,52 +541,21 @@ class TestEfficientAdaptivePiecewiseConv2d(unittest.TestCase):
                          "Positions should no longer be evenly spaced after move_smoothest")
         
         # Test that weights maintain a global linear relationship after move_smoothest
-        # Create a layer with evenly spaced positions
+        # Create a layer with evenly spaced positions and linear weight initialization
         conv_layer_linear = EfficientAdaptivePiecewiseConv2d(
             in_channels=in_channels,
             out_channels=out_channels,
             kernel_size=kernel_size,
             num_points=num_points,
             position_init="uniform",
-            padding=padding
+            padding=padding,
+            weight_init="linear"  # Use the new linear weight initialization
         )
         
-        # Set evenly spaced positions
+        # Set evenly spaced positions (weights are already initialized linearly by the constructor)
         with torch.no_grad():
             positions = torch.linspace(-1.0, 1.0, num_points, device=conv_layer_linear.expansion.positions.device)
             conv_layer_linear.expansion.positions.data = positions
-            
-            # Instead of using different slopes/intercepts for each point,
-            # we'll use a single global linear function for each filter/channel
-            # This way, even if points are reordered, we can still check if the weights
-            # follow the global linear relationship
-            
-            # Get the shape of the weights
-            out_ch, expanded_in_ch, kh, kw = conv_layer_linear.conv.weight.shape
-            
-            # Create random slopes and intercepts for each filter/channel combination
-            # For each output channel and each input channel
-            global_slopes = torch.randn((out_ch, in_channels), device=positions.device)
-            global_intercepts = torch.randn((out_ch, in_channels), device=positions.device)
-            
-            # Initialize the weights to follow linear patterns
-            for out_idx in range(out_ch):
-                for in_idx in range(in_channels):
-                    # Use the same slope and intercept for all points in this filter/channel
-                    slope = global_slopes[out_idx, in_idx].item()
-                    intercept = global_intercepts[out_idx, in_idx].item()
-                    
-                    for p_idx in range(num_points):
-                        # Calculate the index in the expanded input channels
-                        expanded_idx = in_idx * num_points + p_idx
-                        
-                        # For simplicity, we'll set the same pattern for all kernel positions
-                        for ki in range(kh):
-                            for kj in range(kw):
-                                # Set weights to follow f(x) = slope * x + intercept
-                                x = positions[p_idx].item()
-                                value = slope * x + intercept
-                                conv_layer_linear.conv.weight.data[out_idx, expanded_idx, ki, kj] = value
         
         # Store initial positions and weights
         initial_positions = conv_layer_linear.expansion.positions.clone()
