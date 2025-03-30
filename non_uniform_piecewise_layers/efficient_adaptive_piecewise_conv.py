@@ -57,9 +57,9 @@ class PiecewiseLinearExpansion2d(nn.Module):
         """
         batch_size, channels, height, width = x.shape
         
-        # Clamp input values to the position range
-        # TODO: Don't think I actually want these clamped...
-        x_clamped = torch.clamp(x, self.position_min, self.position_max)
+        # No clamping - we'll use linear extrapolation outside the boundaries
+        # This ensures we maintain gradients even for values outside the position range
+        x_clamped = x
         
         # Reshape x_clamped for broadcasting with positions
         # Shape: (batch_size, 1, height, width)
