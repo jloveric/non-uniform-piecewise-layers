@@ -43,7 +43,7 @@ class HypersphereConvNet(nn.Module):
             padding=0,
             num_points=num_points,
             position_range=position_range,
-            position_init="uniform",
+            position_init="random",  # Use random position initialization
             weight_init=weight_init
         )
         
@@ -56,7 +56,7 @@ class HypersphereConvNet(nn.Module):
             num_points=num_points,
             position_range=position_range,
             anti_periodic=False,
-            position_init="uniform"
+            position_init="random"  # Use random position initialization
         )
     
     def forward(self, x):
