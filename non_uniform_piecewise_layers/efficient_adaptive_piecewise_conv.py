@@ -242,6 +242,7 @@ class EfficientAdaptivePiecewiseConv2d(nn.Module):
         self.padding = padding
         self.position_range = position_range
         self.weight_init = weight_init
+
         
         # Create the expansion layer
         self.expansion = PiecewiseLinearExpansion2d(
