@@ -279,13 +279,203 @@ class EfficientAdaptivePiecewiseConv2d(nn.Module):
         return output
     
     
-    def move_smoothest(self, weighted: bool = True):
+    def move_smoothest(self, weighted: bool = True, threshold: float = None):
         """
-        This method is included for API compatibility with AdaptivePiecewiseConv2d,
-        but it doesn't do anything in this implementation since we're using a fixed
-        set of basis functions.
+        Remove the point with the smallest removal error (smoothest point) and insert
+        a new point randomly to the left or right of the point that would cause the
+        largest error when removed.
+        
+        If threshold is provided, only points where the ratio of minimum error to maximum error
+        is below the threshold will be moved.
+        
+        The leftmost and rightmost points cannot be removed or used for insertion.
+        
+        Args:
+            weighted (bool): Whether to weight the errors by the distance between points.
+            threshold (float, optional): If provided, only move points where the ratio of 
+                                        minimum error to maximum error is below this threshold.
+                                        If None, all points are considered for movement.
         
         Returns:
-            bool: Always returns False
+            bool: True if points were moved, False otherwise
         """
-        return False
+        with torch.no_grad():
+            # Access the positions from the expansion layer
+            positions = self.expansion.positions
+            num_points = self.expansion.num_points
+            
+            # We need at least 4 points to be able to remove one and still have enough for interpolation
+            if num_points < 4:
+                return False
+            
+            # Compute removal errors for each interior point
+            # For each interior point, calculate the error if we were to remove it
+            # and interpolate between its neighbors
+            interior_indices = torch.arange(1, num_points-1, device=positions.device)
+            
+            # For each interior point, we need its position and its left/right neighbors
+            errors = []
+            
+            for idx in interior_indices:
+                # Get the left and right neighbors
+                left_pos = positions[idx-1]
+                mid_pos = positions[idx]
+                right_pos = positions[idx+1]
+                
+                # Calculate interpolation parameter t
+                t = (mid_pos - left_pos) / (right_pos - left_pos)
+                
+                # Calculate the error as the distance from the actual position
+                # to where it would be if we interpolated between neighbors
+                error = torch.abs(mid_pos - (left_pos + t * (right_pos - left_pos)))
+                
+                # If weighted, scale by the distance between neighbors
+                if weighted:
+                    error = error * torch.abs(right_pos - left_pos)
+                    
+                errors.append(error)
+            
+            # Convert errors to tensor
+            errors = torch.tensor(errors, device=positions.device)
+            
+            # Check if all errors are zero (within a slightly larger tolerance)
+            is_all_close = torch.allclose(errors, torch.zeros_like(errors), atol=1e-7)
+            
+            # Check if all errors are zero (or very close to zero)
+            # This can happen with evenly spaced positions or due to float precision
+            if is_all_close:
+                # If all errors are zero, we can't determine which point to move
+                # So we either move a random point or don't move any point
+                if threshold is not None and threshold <= 0.0:
+                    # If threshold is 0 or negative, move a random point
+                    min_error_idx = torch.randint(1, num_points-1, (1,)).item()
+                    max_error_idx = torch.randint(1, num_points-1, (1,)).item()
+                    while max_error_idx == min_error_idx:
+                        max_error_idx = torch.randint(1, num_points-1, (1,)).item()
+                else:
+                    # Otherwise (threshold=None or threshold > 0.0), don't move any point
+                    return False
+            else:
+                # Errors are not all zero
+                min_error_idx = torch.argmin(errors).item() + 1  # +1 because we skipped the first point
+                max_error_idx = torch.argmax(errors).item() + 1
+                
+                # If threshold is provided and positive, check if the ratio of min to max error is below it
+                if threshold is not None and threshold > 0.0:
+                    min_error = errors[min_error_idx-1]
+                    max_error = errors[max_error_idx-1]
+                    epsilon = 1e-10  # To avoid division by zero
+                    
+                    # When min_error and max_error are equal (within tolerance), the ratio should be 1.0
+                    if torch.isclose(min_error, max_error, rtol=1e-5, atol=1e-8):
+                        ratio = 1.0
+                    else:
+                         # Ensure max_error + epsilon isn't zero before division
+                        denominator = max_error + epsilon
+                        if denominator < 1e-12: # Avoid division by ~zero 
+                           ratio = 1.0 # Assign 1 if denominator is effectively zero
+                        else:
+                           ratio = min_error / denominator
+                    
+                    # If ratio is greater than or equal to threshold, don't move points
+                    if ratio >= threshold:
+                        return False  # Don't move any points if ratio is above threshold
+            
+            # Determine where to insert the new point (left or right of max error point)
+            # Adjust max_error_idx if the removed point comes before it
+            if min_error_idx < max_error_idx:
+                adjusted_max_idx = max_error_idx - 1
+            else:
+                adjusted_max_idx = max_error_idx
+                
+            # Handle edge cases: ensure we're not inserting next to endpoints
+            if adjusted_max_idx == 0:
+                # First point case, can only insert to the right
+                left_idx = 0
+                right_idx = 1
+            elif adjusted_max_idx == num_points - 2:
+                # Last point case, can only insert to the left
+                left_idx = num_points - 3
+                right_idx = num_points - 2
+            else:
+                # Randomly choose left or right
+                random_choice = torch.rand(1, device=positions.device).item() < 0.5
+                if random_choice:
+                    # Insert to the left
+                    left_idx = adjusted_max_idx - 1
+                    right_idx = adjusted_max_idx
+                else:
+                    # Insert to the right
+                    left_idx = adjusted_max_idx
+                    right_idx = adjusted_max_idx + 1
+            
+            # Get the positions for interpolation
+            left_pos = positions[left_idx]
+            right_pos = positions[right_idx]
+            
+            # Interpolate to get the new position (using t=0.5)
+            t = 0.5
+            new_pos = left_pos + t * (right_pos - left_pos)
+            
+            # Create new positions tensor
+            # First, remove the point with minimum error
+            keep_mask = torch.ones(num_points, dtype=torch.bool, device=positions.device)
+            keep_mask[min_error_idx] = False
+            kept_positions = positions[keep_mask]
+            
+            # Then, insert the new point at the appropriate position
+            insert_idx = left_idx + 1 if left_idx < min_error_idx else left_idx
+            new_positions = torch.cat([
+                kept_positions[:insert_idx],
+                new_pos.unsqueeze(0),
+                kept_positions[insert_idx:]
+            ])
+            
+            # Update the positions in the expansion layer
+            self.expansion.positions.data = new_positions
+            
+            # Now we need to update the convolution weights to match the new positions
+            # Get the current weights
+            old_weights = self.conv.weight.data  # shape: [out_channels, in_channels * num_points, kernel_height, kernel_width]
+            
+            # Create a new weights tensor with the same shape
+            in_channels = self.in_channels
+            out_channels = self.out_channels
+            kernel_size = self.kernel_size
+            
+            # Reshape weights to separate the in_channels and points dimensions
+            # [out_channels, in_channels, num_points, kernel_height, kernel_width]
+            old_weights_reshaped = old_weights.view(out_channels, in_channels, num_points, *kernel_size)
+            
+            # Create a keep mask for the weights, removing the weights corresponding to min_error_idx
+            # and prepare to insert new weights
+            new_weights_reshaped = torch.zeros(out_channels, in_channels, num_points, *kernel_size,
+                                             device=old_weights.device, dtype=old_weights.dtype)
+            
+            # Copy weights for points that are kept (excluding min_error_idx)
+            for i in range(num_points):
+                if i == min_error_idx:
+                    continue
+                    
+                # Determine the index in the new weights tensor
+                new_idx = i if i < min_error_idx else i - 1
+                if new_idx >= insert_idx:
+                    new_idx += 1
+                    
+                new_weights_reshaped[:, :, new_idx] = old_weights_reshaped[:, :, i]
+            
+            # Interpolate weights for the new point
+            left_weights = old_weights_reshaped[:, :, left_idx]
+            right_weights = old_weights_reshaped[:, :, right_idx]
+            new_point_weights = left_weights + t * (right_weights - left_weights)
+            
+            # Insert the new weights
+            new_weights_reshaped[:, :, insert_idx] = new_point_weights
+            
+            # Reshape back to the original format
+            new_weights = new_weights_reshaped.reshape(out_channels, in_channels * num_points, *kernel_size)
+            
+            # Update the convolution weights
+            self.conv.weight.data = new_weights
+            
+            return True

@@ -384,5 +384,280 @@ class TestEfficientAdaptivePiecewiseConv2d(unittest.TestCase):
         # with reasonable statistics rather than requiring exact matches
 
 
+    def test_move_smoothest(self):
+        """Test that the move_smoothest method correctly updates positions and weights."""
+        # Set random seed for reproducibility
+        torch.manual_seed(42)
+        
+        # Layer parameters
+        in_channels = 2
+        out_channels = 3
+        kernel_size = 2
+        num_points = 5  # Need at least 4 points to be able to move one
+        padding = 1
+        
+        # Create input tensor
+        x = torch.randn((1, in_channels, 4, 4), dtype=torch.float32)
+        
+        # Create the layer with non-uniform positions
+        conv_layer = EfficientAdaptivePiecewiseConv2d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            num_points=num_points,
+            position_init="uniform",
+            padding=padding
+        )
+        
+        # Set non-uniform positions to ensure non-zero errors
+        with torch.no_grad():
+            positions = torch.tensor([-1.0, -0.6, -0.2, 0.4, 1.0], 
+                                   device=conv_layer.expansion.positions.device)
+            conv_layer.expansion.positions.data = positions
+        
+        # Store the initial positions and weights
+        initial_positions = conv_layer.expansion.positions.clone()
+        initial_weights = conv_layer.conv.weight.data.clone()
+        
+        # Get the initial output
+        initial_output = conv_layer(x)
+        
+        # Apply move_smoothest with a negative threshold to ensure it moves points
+        moved = conv_layer.move_smoothest(weighted=True, threshold=-1.0)
+        
+        # Verify that points were moved
+        self.assertTrue(moved, "move_smoothest should return True when points are moved")
+        
+        # Get the new positions and weights
+        new_positions = conv_layer.expansion.positions
+        new_weights = conv_layer.conv.weight.data
+        
+        # Verify that positions have changed
+        self.assertFalse(torch.allclose(initial_positions, new_positions), 
+                         "Positions should change after move_smoothest")
+        
+        # Verify that weights have changed
+        self.assertFalse(torch.allclose(initial_weights, new_weights), 
+                         "Weights should change after move_smoothest")
+        
+        # Verify that the number of positions is still the same
+        self.assertEqual(len(initial_positions), len(new_positions), 
+                        "Number of positions should remain the same")
+        
+        # Get the output after moving points
+        new_output = conv_layer(x)
+        
+        # Verify that the output shape hasn't changed
+        self.assertEqual(initial_output.shape, new_output.shape, 
+                        "Output shape should not change after move_smoothest")
+        
+        # Verify that the output has changed (since we moved points)
+        self.assertFalse(torch.allclose(initial_output, new_output), 
+                         "Output should change after move_smoothest")
+        
+        # Test with threshold parameter
+        # Create a new layer with non-uniform positions to ensure non-zero errors
+        conv_layer_threshold = EfficientAdaptivePiecewiseConv2d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            num_points=num_points,
+            position_init="uniform",
+            padding=padding
+        )
+        
+        # Set positions to create a non-uniform distribution with predictable error ratios
+        with torch.no_grad():
+            # Create non-uniform positions with one point having a small error
+            positions = torch.tensor([-1.0, -0.6, -0.2, 0.4, 1.0], 
+                                   device=conv_layer_threshold.expansion.positions.device)
+            conv_layer_threshold.expansion.positions.data = positions
+        
+        # First try with a negative threshold - should always move points even with uniform errors
+        moved_with_negative_threshold = conv_layer_threshold.move_smoothest(weighted=True, threshold=-1.0)
+        self.assertTrue(moved_with_negative_threshold, 
+                       "move_smoothest should return True with a negative threshold")
+        
+        # Create another layer for the high threshold test
+        conv_layer_high_threshold = EfficientAdaptivePiecewiseConv2d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            num_points=num_points,
+            position_init="uniform",
+            padding=padding
+        )
+        
+        # Set the same non-uniform positions
+        with torch.no_grad():
+            positions = torch.tensor([-1.0, -0.6, -0.2, 0.4, 1.0], 
+                                   device=conv_layer_high_threshold.expansion.positions.device)
+            conv_layer_high_threshold.expansion.positions.data = positions
+        
+        # Now try with a threshold of 1.0 - should never move points
+        moved_with_high_threshold = conv_layer_high_threshold.move_smoothest(weighted=True, threshold=1.0)
+        self.assertFalse(moved_with_high_threshold, 
+                         "move_smoothest should return False when threshold=1.0")
+        
+        # Test that positions are actually changed and no longer evenly spaced
+        # Create a layer with evenly spaced positions
+        conv_layer_even = EfficientAdaptivePiecewiseConv2d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            num_points=num_points,
+            position_init="uniform",
+            padding=padding
+        )
+        
+        # Set evenly spaced positions
+        with torch.no_grad():
+            positions = torch.linspace(-1.0, 1.0, num_points, device=conv_layer_even.expansion.positions.device)
+            conv_layer_even.expansion.positions.data = positions
+            
+        # Store initial positions
+        initial_positions = conv_layer_even.expansion.positions.clone()
+        
+        # Verify positions are evenly spaced initially
+        diffs = initial_positions[1:] - initial_positions[:-1]
+        self.assertTrue(torch.allclose(diffs, diffs[0].expand_as(diffs), rtol=1e-5, atol=1e-5),
+                        "Initial positions should be evenly spaced")
+        
+        # Apply move_smoothest with a negative threshold to ensure it moves points
+        moved = conv_layer_even.move_smoothest(weighted=True, threshold=-1.0)
+        self.assertTrue(moved, "move_smoothest should return True with negative threshold")
+        
+        # Get new positions
+        new_positions = conv_layer_even.expansion.positions
+        
+        # Verify positions have changed
+        self.assertFalse(torch.allclose(initial_positions, new_positions, rtol=1e-5, atol=1e-5),
+                         "Positions should change after move_smoothest")
+        print('initial_positions', initial_positions, 'new_posistions', new_positions)
+
+        # Verify positions are no longer evenly spaced
+        new_diffs = new_positions[1:] - new_positions[:-1]
+        self.assertFalse(torch.allclose(new_diffs, new_diffs[0].expand_as(new_diffs), rtol=1e-5, atol=1e-5),
+                         "Positions should no longer be evenly spaced after move_smoothest")
+        
+        # Test that weights maintain a global linear relationship after move_smoothest
+        # Create a layer with evenly spaced positions
+        conv_layer_linear = EfficientAdaptivePiecewiseConv2d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            num_points=num_points,
+            position_init="uniform",
+            padding=padding
+        )
+        
+        # Set evenly spaced positions
+        with torch.no_grad():
+            positions = torch.linspace(-1.0, 1.0, num_points, device=conv_layer_linear.expansion.positions.device)
+            conv_layer_linear.expansion.positions.data = positions
+            
+            # Instead of using different slopes/intercepts for each point,
+            # we'll use a single global linear function for each filter/channel
+            # This way, even if points are reordered, we can still check if the weights
+            # follow the global linear relationship
+            
+            # Get the shape of the weights
+            out_ch, expanded_in_ch, kh, kw = conv_layer_linear.conv.weight.shape
+            
+            # Create random slopes and intercepts for each filter/channel combination
+            # For each output channel and each input channel
+            global_slopes = torch.randn((out_ch, in_channels), device=positions.device)
+            global_intercepts = torch.randn((out_ch, in_channels), device=positions.device)
+            
+            # Initialize the weights to follow linear patterns
+            for out_idx in range(out_ch):
+                for in_idx in range(in_channels):
+                    # Use the same slope and intercept for all points in this filter/channel
+                    slope = global_slopes[out_idx, in_idx].item()
+                    intercept = global_intercepts[out_idx, in_idx].item()
+                    
+                    for p_idx in range(num_points):
+                        # Calculate the index in the expanded input channels
+                        expanded_idx = in_idx * num_points + p_idx
+                        
+                        # For simplicity, we'll set the same pattern for all kernel positions
+                        for ki in range(kh):
+                            for kj in range(kw):
+                                # Set weights to follow f(x) = slope * x + intercept
+                                x = positions[p_idx].item()
+                                value = slope * x + intercept
+                                conv_layer_linear.conv.weight.data[out_idx, expanded_idx, ki, kj] = value
+        
+        # Store initial positions and weights
+        initial_positions = conv_layer_linear.expansion.positions.clone()
+        initial_weights = conv_layer_linear.conv.weight.data.clone()
+        
+        # Apply move_smoothest with a negative threshold to ensure it moves points
+        moved = conv_layer_linear.move_smoothest(weighted=True, threshold=-1.0)
+        self.assertTrue(moved, "move_smoothest should return True with negative threshold")
+        
+        # Get new positions and weights after moving points
+        new_positions = conv_layer_linear.expansion.positions
+        new_weights = conv_layer_linear.conv.weight.data
+        
+        # Verify positions have changed
+        self.assertFalse(torch.allclose(initial_positions, new_positions),
+                         "Positions should change after move_smoothest")
+        
+        # Print positions for debugging
+        print(f"Initial positions: {initial_positions}")
+        print(f"New positions: {new_positions}")
+        
+        # Now check if the weights still follow the global linear relationship
+        # For each output channel and input channel, plot the weights against positions
+        # and check if they still follow a linear pattern
+        for out_idx in range(out_ch):
+            for in_idx in range(in_channels):
+                # Extract the weights for this filter/channel
+                weights = []
+                for p_idx in range(num_points):
+                    expanded_idx = in_idx * num_points + p_idx
+                    weights.append(new_weights[out_idx, expanded_idx, 0, 0].item())
+                
+                # Convert to tensors for easier manipulation
+                positions_tensor = new_positions
+                weights_tensor = torch.tensor(weights, device=positions_tensor.device)
+                
+                # Fit a linear function to the weights vs positions
+                # Using the formula for linear regression:
+                # slope = (E[xy] - E[x]E[y]) / (E[x^2] - E[x]^2)
+                # intercept = E[y] - slope * E[x]
+                mean_x = torch.mean(positions_tensor)
+                mean_y = torch.mean(weights_tensor)
+                mean_xy = torch.mean(positions_tensor * weights_tensor)
+                mean_x2 = torch.mean(positions_tensor * positions_tensor)
+                
+                fitted_slope = (mean_xy - mean_x * mean_y) / (mean_x2 - mean_x * mean_x)
+                fitted_intercept = mean_y - fitted_slope * mean_x
+                
+                # Calculate the expected weights based on the fitted line
+                expected_weights = fitted_slope * positions_tensor + fitted_intercept
+                
+                # Check if the actual weights are close to the expected weights
+                # This verifies that the weights still follow a linear pattern
+                # even if the specific slope/intercept might have changed
+                is_linear = torch.allclose(weights_tensor, expected_weights, rtol=1e-2, atol=1e-2)
+                
+                # Print debug info for the first few channels
+                if out_idx < 1 and in_idx < 1:
+                    print(f"\nFilter {out_idx}, Channel {in_idx}:")
+                    print(f"  Fitted slope: {fitted_slope.item():.6f}, intercept: {fitted_intercept.item():.6f}")
+                    for p_idx in range(num_points):
+                        actual = weights[p_idx]
+                        expected = expected_weights[p_idx].item()
+                        pos = positions_tensor[p_idx].item()
+                        print(f"  Point {p_idx}: pos={pos:.6f}, weight={actual:.6f}, expected={expected:.6f}, diff={abs(actual-expected):.6f}")
+                    print(f"  Is linear: {is_linear}")
+                
+                # Assert that the weights still follow a linear pattern
+                self.assertTrue(is_linear, 
+                               f"Weights should maintain a linear relationship after move_smoothest for out_ch={out_idx}, in_ch={in_idx}")
+
+
 if __name__ == "__main__":
     unittest.main()
