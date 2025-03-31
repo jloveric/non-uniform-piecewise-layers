@@ -141,26 +141,8 @@ def save_piecewise_plots(model, epoch, dpi=100, initialize_weights=False):
     kernel_size = model.conv.kernel_size
     weights_reshaped = weights.view(out_channels, in_channels, num_points, *kernel_size)
     
-    # If requested, initialize the convolutional layer with different patterns for better visualization
-    if initialize_weights:
-        with torch.no_grad():
-            for out_ch in range(out_channels):
-                for in_ch in range(in_channels):
-                    for kh in range(kernel_size[0]):
-                        for kw in range(kernel_size[1]):
-                            # Create a unique pattern for each kernel element
-                            # Add a small random offset to each weight to ensure they're visually distinct
-                            offset = 0.2 * (out_ch + in_ch + kh + kw)
-                            scale = 0.1 * (1 + out_ch + in_ch * 0.5 + kh * 0.3 + kw * 0.2)
-                            for p_idx in range(num_points):
-                                # Create a sinusoidal pattern with different frequencies
-                                pos = positions[p_idx].item()
-                                model.conv.conv.weight.data[out_ch, in_ch * num_points + p_idx, kh, kw] = \
-                                    scale * torch.sin(torch.tensor(3.0 * pos + offset)) + offset
-        
-        # Get the updated weights after initialization
-        weights = model.conv.conv.weight.data.cpu()
-        weights_reshaped = weights.view(out_channels, in_channels, num_points, *kernel_size)
+    # We've removed the manual weight initialization with sinusoidal patterns
+    # since we're now using random position initialization in the layer itself
     
     # Plot positions vs weights for each kernel position
     for out_ch in range(out_channels):

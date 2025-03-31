@@ -8,7 +8,7 @@ import argparse
 # Add the parent directory to the path so we can import the module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from non_uniform_piecewise_layers.efficient_adaptive_piecewise_conv import EfficientAdaptivePiecewiseConv2d
+from non_uniform_piecewise_layers.custom_positions_conv import CustomPositionsPiecewiseConv2d
 from non_uniform_piecewise_layers.adaptive_piecewise_conv import AdaptivePiecewiseConv2d
 
 def time_layer_forward(layer, x, device, num_warmup=10, num_runs=100):
@@ -65,7 +65,7 @@ def main(args):
     # --- Layers ---
     print("Initializing layers...")
     try:
-        efficient_layer = EfficientAdaptivePiecewiseConv2d(
+        custom_layer = CustomPositionsPiecewiseConv2d(
             in_channels=in_channels,
             out_channels=out_channels,
             kernel_size=kernel_size,
@@ -89,13 +89,13 @@ def main(args):
         return
 
     # --- Timing ---
-    print("Timing EfficientAdaptivePiecewiseConv2d...")
+    print("Timing CustomPositionsPiecewiseConv2d...")
     try:
-        efficient_time = time_layer_forward(efficient_layer, x, device, num_warmup=args.warmup, num_runs=args.runs)
-        print(f"  Average forward pass time: {efficient_time * 1000:.4f} ms")
+        custom_time = time_layer_forward(custom_layer, x, device, num_warmup=args.warmup, num_runs=args.runs)
+        print(f"  Average forward pass time: {custom_time * 1000:.4f} ms")
     except Exception as e:
         print(f"  Error during timing: {e}")
-        efficient_time = float('inf')
+        custom_time = float('inf')
 
     print("Timing AdaptivePiecewiseConv2d...")
     try:
@@ -107,10 +107,10 @@ def main(args):
 
     # --- Results ---
     print("---")
-    if efficient_time != float('inf') and original_time != float('inf') and original_time > 0:
-        speedup = original_time / efficient_time
-        print(f"Efficient layer is {speedup:.2f}x faster than the original layer.")
-    elif efficient_time == float('inf') or original_time == float('inf'):
+    if custom_time != float('inf') and original_time != float('inf') and original_time > 0:
+        speedup = original_time / custom_time
+        print(f"Custom positions layer is {speedup:.2f}x faster than the original layer.")
+    elif custom_time == float('inf') or original_time == float('inf'):
         print("Could not complete comparison due to errors.")
     else:
          print("Comparison complete.")

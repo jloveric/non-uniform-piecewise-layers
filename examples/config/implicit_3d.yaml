@@ -1,0 +1,50 @@
+# Configuration for implicit 3D representation
+# This config is used by the implicit_3d.py script
+
+# URL to download the 3D model
+model_url: "https://graphics.stanford.edu/~mdfisher/Data/Meshes/bunny.obj"  # Stanford bunny model
+
+# Device to use for training
+device: "cuda"  # Use "cuda" for GPU, "cpu" for CPU
+
+# Model configuration
+hidden_layers: [64, 64, 64]  # Sizes of hidden layers
+rotations: 4                 # Number of rotations in the rotation layer
+num_points: 8                # Initial number of points for piecewise functions
+position_range: [-1, 1]      # Range of positions for piecewise functions
+anti_periodic: true          # Whether to use anti-periodic boundary conditions
+position_init: "random"      # Initialization method for positions
+
+# Point cloud generation
+num_points: 10000            # Number of points to sample from the mesh
+
+# Training configuration
+epochs: 100                  # Number of training epochs
+batch_size: 1024             # Batch size for training
+learning_rate: 0.001         # Learning rate
+optimizer: "lion"            # Optimizer (lion or adam)
+
+# Adaptive configuration
+adaptive: true               # Whether to use adaptive point management
+adaptive_frequency: 10       # Apply adaptation every N batches
+move_smoothest: true         # Whether to move smoothest points
+move_smoothest_after: 10     # Start moving smoothest points after N epochs
+
+# Mesh extraction configuration
+extract_mesh: true           # Whether to extract meshes during training
+mesh_resolution: 64          # Resolution of the grid for marching cubes
+mesh_threshold: 0.0          # Threshold for the isosurface
+
+# Visualization and saving configuration
+save_frequency: 10           # Save progress image and mesh every N epochs
+checkpoint_frequency: 20     # Save checkpoint every N epochs
+
+# Hydra configuration
+hydra:
+  run:
+    dir: outputs/implicit_3d/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/implicit_3d/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+  job:
+    chdir: True

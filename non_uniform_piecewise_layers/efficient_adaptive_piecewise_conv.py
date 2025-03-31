@@ -242,7 +242,8 @@ class EfficientAdaptivePiecewiseConv2d(nn.Module):
         self.padding = padding
         self.position_range = position_range
         self.weight_init = weight_init
-
+        self.position_init = position_init
+        self.num_points = num_points
         
         # Create the expansion layer
         self.expansion = PiecewiseLinearExpansion2d(
@@ -274,6 +275,7 @@ class EfficientAdaptivePiecewiseConv2d(nn.Module):
         
         if self.weight_init == "random":
             # Initialize with uniform random values
+            # Standard random initialization
             self.conv.weight.data.uniform_(-factor, factor)
         else:  # linear
             # Initialize each filter/channel with a random line (collinear points)
@@ -319,8 +321,7 @@ class EfficientAdaptivePiecewiseConv2d(nn.Module):
         Returns:
             torch.Tensor: Output tensor of shape (batch_size, out_channels, out_height, out_width)
         """
-            
-        # Expand the input using piecewise linear basis functions
+        # Use the standard expansion for all cases
         expanded = self.expansion(x)
         
         # Apply the convolutional layer
