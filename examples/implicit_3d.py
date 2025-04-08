@@ -88,12 +88,13 @@ def generate_point_cloud(mesh, num_points=10000, signed_distance=True, normalize
         Tuple of (points, sdf_values)
     """
     # Sample points on the surface
-    surface_points, _ = trimesh.sample.sample_surface(mesh, num_points // 2)
-    
+    surface_points_readonly, _ = trimesh.sample.sample_surface(mesh, num_points // 2)
+    surface_points = surface_points_readonly.copy()
+
     # Sample points in the volume
     # Create a slightly larger bounding box
     bounds = mesh.bounding_box.bounds
-    min_bound, max_bound = bounds
+    min_bound, max_bound = bounds.copy()
     padding = (max_bound - min_bound) * 0.1
     min_bound -= padding
     max_bound += padding
@@ -117,7 +118,7 @@ def generate_point_cloud(mesh, num_points=10000, signed_distance=True, normalize
             point = points[i]
             closest_point, distance, _ = trimesh.proximity.closest_point(mesh, [point])
             # Check if point is inside or outside
-            inside = trimesh.ray.contains_points(mesh, [point])[0]
+            inside = mesh.contains([point])[0]
             sdf_values[i] = -distance if inside else distance
     else:
         # Just use 1 for surface, 0 for non-surface

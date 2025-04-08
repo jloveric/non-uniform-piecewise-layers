@@ -27,6 +27,7 @@ tensorboard = "^2.19.0"
 trimesh = "^4.6.6"
 pymcubes = "^0.1.6"
 scikit-image = "^0.25.2"
+rtree = "^1.4.0"
 
 [build-system]
 requires = ["poetry-core"]
