@@ -404,7 +404,7 @@ def main(cfg: DictConfig):
     # Generate point cloud with SDF values
     points, sdf_values = generate_point_cloud(
         mesh, 
-        num_points=cfg.num_points, 
+        num_points=cfg.num_mesh_points, 
         signed_distance=True, 
         normalize=True
     )
