@@ -19,6 +19,7 @@ from io import BytesIO
 from tqdm import tqdm
 import mcubes
 from skimage import measure
+import open3d as o3d
 
 from non_uniform_piecewise_layers import AdaptivePiecewiseMLP
 from non_uniform_piecewise_layers.rotation_layer import fixed_rotation_layer
@@ -289,8 +290,40 @@ def extract_mesh(model, resolution=64, threshold=0.0, device='cpu'):
     # Predict SDF values
     sdf_values = batch_predict(model, points_tensor).cpu().numpy().reshape(resolution, resolution, resolution)
     
+    # Debug information about SDF values
+    logger.info(f"SDF values - min: {np.min(sdf_values)}, max: {np.max(sdf_values)}, mean: {np.mean(sdf_values)}")
+    logger.info(f"Number of values below threshold {threshold}: {np.sum(sdf_values < threshold)}")
+    logger.info(f"Number of values above threshold {threshold}: {np.sum(sdf_values > threshold)}")
+    
+    # Try different thresholds if needed
+    if np.sum(sdf_values < threshold) == 0 or np.sum(sdf_values > threshold) == 0:
+        logger.warning(f"No isosurface found at threshold {threshold}. Trying to find a better threshold...")
+        # Find a threshold that would create a surface
+        percentiles = [10, 20, 30, 40, 50, 60, 70, 80, 90]
+        for p in percentiles:
+            potential_threshold = np.percentile(sdf_values, p)
+            below_count = np.sum(sdf_values < potential_threshold)
+            above_count = np.sum(sdf_values > potential_threshold)
+            logger.info(f"Percentile {p}%: threshold={potential_threshold}, below={below_count}, above={above_count}")
+        
+        # Use median as fallback threshold if original threshold doesn't work
+        if np.sum(sdf_values < threshold) == 0 or np.sum(sdf_values > threshold) == 0:
+            new_threshold = np.median(sdf_values)
+            logger.warning(f"Using median as threshold: {new_threshold}")
+            threshold = new_threshold
+    
     # Extract mesh using marching cubes
-    vertices, faces = mcubes.marching_cubes(sdf_values, threshold)
+    try:
+        vertices, faces = mcubes.marching_cubes(sdf_values, threshold)
+        logger.info(f"Mesh extracted: {len(vertices)} vertices, {len(faces)} faces")
+    except Exception as e:
+        logger.error(f"Error in marching cubes: {str(e)}")
+        return np.array([]), np.array([])  # Return empty arrays on error
+    
+    # Check if mesh is empty
+    if len(vertices) == 0 or len(faces) == 0:
+        logger.warning("Generated mesh is empty!")
+        return np.array([]), np.array([])
     
     # Rescale vertices to [-1, 1]
     vertices = vertices / (resolution - 1) * 2 - 1
@@ -307,7 +340,60 @@ def save_mesh(vertices, faces, filename):
         faces: Mesh faces
         filename: Output filename
     """
+    if len(vertices) == 0 or len(faces) == 0:
+        logger.warning(f"Cannot save empty mesh to {filename}")
+        # Create an empty file with a comment explaining why it's empty
+        with open(filename, 'w') as f:
+            f.write("# Empty mesh - no isosurface found\n")
+        return
+    
+    logger.info(f"Saving mesh with {len(vertices)} vertices and {len(faces)} faces to {filename}")
     mcubes.export_obj(vertices, faces, filename)
+
+
+def add_mesh_to_tensorboard(writer, vertices, faces, epoch, tag="mesh"):
+    """
+    Add a 3D mesh to TensorBoard using PyTorch's native TensorBoard mesh visualization.
+    
+    Args:
+        writer: TensorBoard SummaryWriter
+        vertices: Mesh vertices as numpy array
+        faces: Mesh faces as numpy array
+        epoch: Current epoch
+        tag: Tag for the mesh in TensorBoard
+    """
+    if len(vertices) == 0 or len(faces) == 0:
+        logger.warning(f"Cannot add empty mesh to TensorBoard")
+        return
+    
+    # Create Open3D mesh for coloring (optional)
+    mesh = o3d.geometry.TriangleMesh()
+    mesh.vertices = o3d.utility.Vector3dVector(vertices)
+    mesh.triangles = o3d.utility.Vector3iVector(faces)
+    
+    # Compute vertex normals for better visualization
+    mesh.compute_vertex_normals()
+    
+    # Add color based on vertex normals for better visualization
+    normals = np.asarray(mesh.vertex_normals)
+    # Convert normals to colors (normalize from [-1,1] to [0,1])
+    colors = (normals + 1) / 2.0
+    # Scale to [0, 255] for TensorBoard
+    colors = (colors * 255).astype(np.uint8)
+    
+    # Convert to PyTorch tensors and add batch dimension
+    vertices_tensor = torch.tensor(vertices).float().unsqueeze(0)  # [1, N, 3]
+    faces_tensor = torch.tensor(faces).int().unsqueeze(0)          # [1, F, 3]
+    colors_tensor = torch.tensor(colors).unsqueeze(0)              # [1, N, 3]
+    
+    # Add to TensorBoard
+    writer.add_mesh(
+        tag=tag,
+        vertices=vertices_tensor,
+        faces=faces_tensor,
+        colors=colors_tensor,
+        global_step=epoch
+    )
 
 
 def save_progress_image(model, points, sdf_values, epoch, loss, output_dir, batch_size=512, writer=None):
@@ -511,6 +597,15 @@ def main(cfg: DictConfig):
                     faces, 
                     os.path.join(output_dir, f"mesh_epoch_{epoch:04d}.obj")
                 )
+                
+                # Add mesh to TensorBoard
+                add_mesh_to_tensorboard(
+                    writer,
+                    vertices,
+                    faces,
+                    epoch,
+                    tag="3d_mesh"  # Use consistent tag for slider effect
+                )
         
         # Save best model
         if avg_loss < best_loss:
@@ -538,6 +633,15 @@ def main(cfg: DictConfig):
             device=device
         )
         save_mesh(vertices, faces, os.path.join(output_dir, "final_mesh.obj"))
+        
+        # Add final mesh to TensorBoard
+        add_mesh_to_tensorboard(
+            writer,
+            vertices,
+            faces,
+            cfg.epochs,
+            tag="3d_mesh"  # Use consistent tag for slider effect
+        )
     
     # Close TensorBoard writer
     writer.close()
