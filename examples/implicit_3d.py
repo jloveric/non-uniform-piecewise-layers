@@ -112,7 +112,7 @@ def generate_point_cloud(mesh, num_points=10000, signed_distance=True, normalize
         sdf_values = np.zeros(points.shape[0])
         
         # Surface points have distance close to 0
-        sdf_values[:num_points // 2] = np.random.normal(0, 0.01, size=num_points // 2)
+        sdf_values[:num_points // 2] = 0.0 #np.random.normal(0, 0.01, size=num_points // 2)
         
         # Volume points need distance computation
         for i in range(num_points // 2, num_points):
@@ -373,20 +373,37 @@ def add_mesh_to_tensorboard(writer, vertices, faces, epoch, tag="mesh"):
     mesh.vertices = o3d.utility.Vector3dVector(vertices)
     mesh.triangles = o3d.utility.Vector3iVector(faces)
     
-    # Compute vertex normals for better visualization
-    mesh.compute_vertex_normals()
+    # --- SOLUTION: Convert GPU mesh to CPU mesh if needed ---
+    try:
+        # If using the newer tensor-based API (o3d.t.geometry)
+        cpu_mesh = mesh.to_legacy()
+    except AttributeError:
+        # If it's already a legacy-style mesh, use it directly
+        logger.info("Mesh is already in legacy format")
+        cpu_mesh = mesh
+    
+    # Ensure the CPU mesh has vertices and triangles before proceeding
+    if not cpu_mesh.has_vertices() or not cpu_mesh.has_triangles():
+        logger.warning(f"Mesh '{tag}' is empty after CPU conversion. Skipping orientation and TensorBoard logging.")
+        return
+    
+    # --- Now operate on the CPU mesh ---
+    logger.info("Orienting mesh triangles to exterior (on CPU)...")
+    cpu_mesh.orient_triangles_to_exterior()
+    cpu_mesh.compute_vertex_normals()  # Compute vertex normals for better visualization
+    logger.info("Orientation complete.")
     
     # Add color based on vertex normals for better visualization
-    normals = np.asarray(mesh.vertex_normals)
+    normals = np.asarray(cpu_mesh.vertex_normals)
     # Convert normals to colors (normalize from [-1,1] to [0,1])
     colors = (normals + 1) / 2.0
     # Scale to [0, 255] for TensorBoard
     colors = (colors * 255).astype(np.uint8)
     
     # Convert to PyTorch tensors and add batch dimension
-    vertices_tensor = torch.tensor(vertices).float().unsqueeze(0)  # [1, N, 3]
-    faces_tensor = torch.tensor(faces).int().unsqueeze(0)          # [1, F, 3]
-    colors_tensor = torch.tensor(colors).unsqueeze(0)              # [1, N, 3]
+    vertices_tensor = torch.tensor(np.asarray(cpu_mesh.vertices)).float().unsqueeze(0)  # [1, N, 3]
+    faces_tensor = torch.tensor(np.asarray(cpu_mesh.triangles)).int().unsqueeze(0)      # [1, F, 3]
+    colors_tensor = torch.tensor(colors).unsqueeze(0)                                  # [1, N, 3]
     
     # Add to TensorBoard
     writer.add_mesh(
@@ -396,6 +413,7 @@ def add_mesh_to_tensorboard(writer, vertices, faces, epoch, tag="mesh"):
         colors=colors_tensor,
         global_step=epoch
     )
+    logger.info(f"Mesh '{tag}' added to TensorBoard.")
 
 
 def save_progress_image(model, points, sdf_values, epoch, loss, output_dir, batch_size=512, writer=None):
@@ -567,7 +585,6 @@ def main(cfg: DictConfig):
                     
                     # Move smoothest point
                     if cfg.move_smoothest and epoch > cfg.move_smoothest_after:
-                        model.move_smoothest()
                         optimizer = generate_optimizer(
                             parameters=model.parameters(),
                             learning_rate=cfg.learning_rate,
