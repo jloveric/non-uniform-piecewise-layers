@@ -114,20 +114,36 @@ def generate_point_cloud(mesh, num_points=10000, signed_distance=True, normalize
         # Surface points have distance close to 0
         sdf_values[:num_points // 2] = 0.0 #np.random.normal(0, 0.01, size=num_points // 2)
         
-        # Volume points need distance computation - vectorized approach
+        # Volume points need distance computation - batched vectorized approach
         volume_points = points[num_points // 2:]
+        num_volume_points = volume_points.shape[0]
         
-        # Compute closest points and distances in one batch operation
-        closest_points, distances, _ = trimesh.proximity.closest_point(mesh, volume_points)
+        # Process in batches to avoid memory issues
+        max_batch_size = 100000  # Maximum batch size to avoid memory issues
+        logger.info(f"Processing {num_volume_points} volume points in batches of {max_batch_size}")
         
-        # Check which points are inside the mesh (vectorized)
-        inside = mesh.contains(volume_points)
-        
-        # Apply sign based on inside/outside (vectorized)
-        distances[inside] *= -1  # Negative distance for inside points
-        
-        # Assign to sdf_values
-        sdf_values[num_points // 2:] = distances
+        for batch_start in range(0, num_volume_points, max_batch_size):
+            batch_end = min(batch_start + max_batch_size, num_volume_points)
+            batch_size = batch_end - batch_start
+            
+            logger.info(f"Processing batch {batch_start//max_batch_size + 1}: points {batch_start} to {batch_end-1}")
+            
+            # Get current batch of points
+            batch_points = volume_points[batch_start:batch_end]
+            
+            # Compute closest points and distances for this batch
+            _, batch_distances, _ = trimesh.proximity.closest_point(mesh, batch_points)
+            
+            # Check which points are inside the mesh (vectorized)
+            batch_inside = mesh.contains(batch_points)
+            
+            # Apply sign based on inside/outside (vectorized)
+            batch_distances[batch_inside] *= -1  # Negative distance for inside points
+            
+            # Assign to sdf_values
+            sdf_values[num_points // 2 + batch_start:num_points // 2 + batch_end] = batch_distances
+            
+        logger.info(f"Finished processing all {num_volume_points} volume points")
     else:
         # Just use 1 for surface, 0 for non-surface
         sdf_values = np.zeros(points.shape[0])
@@ -644,6 +660,9 @@ def main(cfg: DictConfig):
         # Calculate average loss for the epoch
         avg_loss = epoch_loss / len(dataloader)
         logger.info(f"Epoch {epoch}: Loss = {avg_loss:.6f}")
+        
+        # Log loss to TensorBoard every epoch
+        writer.add_scalar('Loss/train', avg_loss, epoch)
         
         # Save progress visualization
         if epoch % cfg.save_frequency == 0:
