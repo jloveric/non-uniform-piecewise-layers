@@ -160,7 +160,8 @@ class Implicit3DNetwork(nn.Module):
         num_points=5,
         position_range=(-1, 1),
         anti_periodic=True,
-        position_init='random'
+        position_init='random',
+        rotation_layers=1 # 1 or 2
     ):
         """
         Initialize the network.
@@ -178,7 +179,8 @@ class Implicit3DNetwork(nn.Module):
         
         self.input_dim = input_dim
         self.output_dim = output_dim
-        
+        self.rotation_layers = rotation_layers
+
         # Create the rotation layer
         self.rotation_layer, rotation_output_dim = fixed_rotation_layer(
             n=input_dim, 
@@ -186,16 +188,35 @@ class Implicit3DNetwork(nn.Module):
             normalize=True
         )
         
-        # Create the adaptive MLP
-        mlp_widths = [rotation_output_dim] + hidden_layers + [output_dim]
-        self.mlp = AdaptivePiecewiseMLP(
-            width=mlp_widths,
-            num_points=num_points,
-            position_range=position_range,
-            anti_periodic=anti_periodic,
-            position_init=position_init,
-            normalization="maxabs"
-        )
+        if self.rotation_layers==2:
+            self.second_rotation_layer, second_rotation_output_dim = fixed_rotation_layer(
+                n=rotation_output_dim, 
+                rotations=rotations, 
+                normalize=True
+            )
+
+        if self.rotation_layers==1:
+            # Create the adaptive MLP
+            mlp_widths = [rotation_output_dim] + hidden_layers + [output_dim]
+            self.mlp = AdaptivePiecewiseMLP(
+                width=mlp_widths,
+                num_points=num_points,
+                position_range=position_range,
+                anti_periodic=anti_periodic,
+                position_init=position_init,
+                normalization="maxabs"
+            )
+        elif self.rotation_layers==2:
+            # Create the adaptive MLP
+            mlp_widths = [second_rotation_output_dim] + hidden_layers + [output_dim]
+            self.mlp = AdaptivePiecewiseMLP(
+                width=mlp_widths,
+                num_points=num_points,
+                position_range=position_range,
+                anti_periodic=anti_periodic,
+                position_init=position_init,
+                normalization="maxabs"
+            )
     
     def forward(self, x):
         """
@@ -207,11 +228,20 @@ class Implicit3DNetwork(nn.Module):
         Returns:
             Output tensor of shape (batch_size, output_dim)
         """
-        # Apply rotation layer
-        x = self.rotation_layer(x)
-        
-        # Apply MLP
-        x = self.mlp(x)
+        if self.rotation_layers==1:
+            # Apply rotation layer
+            x = self.rotation_layer(x)
+            
+            # Apply MLP
+            x = self.mlp(x)
+        elif self.rotation_layers==2:
+            # Apply rotation layer
+            x = self.rotation_layer(x)
+            
+            x = self.second_rotation_layer(x)
+            
+            # Apply MLP
+            x = self.mlp(x)
         
         return x
     
@@ -556,7 +586,8 @@ def main(cfg: DictConfig):
         num_points=cfg.num_points,
         position_range=cfg.position_range,
         anti_periodic=cfg.anti_periodic,
-        position_init=cfg.position_init
+        position_init=cfg.position_init,
+        rotation_layers=cfg.rotation_layers,
     ).to(device)
     
     # Create optimizer

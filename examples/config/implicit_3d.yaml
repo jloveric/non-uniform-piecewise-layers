@@ -10,13 +10,14 @@ device: "cuda"  # Use "cuda" for GPU, "cpu" for CPU
 # Model configuration
 hidden_layers: [20, 20]  # Sizes of hidden layers
 rotations: 2              # Number of rotations in the rotation layer
+rotation_layers: 1
 num_points: 30                # Initial number of points for piecewise functions
 position_range: [-1, 1]      # Range of positions for piecewise functions
 anti_periodic: false          # Whether to use anti-periodic boundary conditions
 position_init: "random"      # Initialization method for positions
 
 # Point cloud generation
-num_mesh_points: 100000            # Number of points to sample from the mesh
+num_mesh_points: 1000000            # Number of points to sample from the mesh
 
 # Training configuration
 epochs: 100                  # Number of training epochs
