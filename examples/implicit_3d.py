@@ -348,24 +348,7 @@ def extract_mesh(model, resolution=64, threshold=0.0, device='cpu'):
     logger.info(f"Number of values below threshold {threshold}: {np.sum(sdf_values < threshold)}")
     logger.info(f"Number of values above threshold {threshold}: {np.sum(sdf_values > threshold)}")
     
-    # Try different thresholds if needed
-    """
-    if np.sum(sdf_values < threshold) == 0 or np.sum(sdf_values > threshold) == 0:
-        logger.warning(f"No isosurface found at threshold {threshold}. Trying to find a better threshold...")
-        # Find a threshold that would create a surface
-        percentiles = [10, 20, 30, 40, 50, 60, 70, 80, 90]
-        for p in percentiles:
-            potential_threshold = np.percentile(sdf_values, p)
-            below_count = np.sum(sdf_values < potential_threshold)
-            above_count = np.sum(sdf_values > potential_threshold)
-            logger.info(f"Percentile {p}%: threshold={potential_threshold}, below={below_count}, above={above_count}")
-        
-        # Use median as fallback threshold if original threshold doesn't work
-        if np.sum(sdf_values < threshold) == 0 or np.sum(sdf_values > threshold) == 0:
-            new_threshold = np.median(sdf_values)
-            logger.warning(f"Using median as threshold: {new_threshold}")
-            threshold = new_threshold
-    """
+    
     
     # Extract mesh using marching cubes
     try:
@@ -394,16 +377,78 @@ def save_mesh(vertices, faces, filename):
         vertices: Mesh vertices
         faces: Mesh faces
         filename: Output filename
+        
+    Returns:
+        The saved mesh as an Open3D mesh object if successful, None otherwise
     """
     if len(vertices) == 0 or len(faces) == 0:
         logger.warning(f"Cannot save empty mesh to {filename}")
         # Create an empty file with a comment explaining why it's empty
         with open(filename, 'w') as f:
             f.write("# Empty mesh - no isosurface found\n")
-        return
+        return None
     
     logger.info(f"Saving mesh with {len(vertices)} vertices and {len(faces)} faces to {filename}")
     mcubes.export_obj(vertices, faces, filename)
+    
+    # Also create an Open3D mesh for rendering
+    mesh = o3d.geometry.TriangleMesh()
+    mesh.vertices = o3d.utility.Vector3dVector(vertices)
+    mesh.triangles = o3d.utility.Vector3iVector(faces)
+    mesh.compute_vertex_normals()
+    
+    return mesh
+
+
+def render_high_res_mesh(mesh, output_file, width=1200, height=900, background_color=[1, 1, 1]):
+    """
+    Render a high-resolution image of a mesh and save it to a file.
+    
+    Args:
+        mesh: Open3D mesh object
+        output_file: Output filename for the rendered image
+        width: Width of the output image in pixels
+        height: Height of the output image in pixels
+        background_color: Background color as RGB list [r, g, b] in range [0, 1]
+    """
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    
+    # Create a visualizer
+    vis = o3d.visualization.Visualizer()
+    vis.create_window(width=width, height=height, visible=False)
+    
+    # Add the mesh to the visualizer
+    vis.add_geometry(mesh)
+    
+    # Set rendering options
+    opt = vis.get_render_option()
+    opt.background_color = np.array(background_color)
+    opt.point_size = 5.0
+    opt.light_on = True
+    opt.mesh_show_back_face = False
+    
+    # Set camera position for a good view
+    ctr = vis.get_view_control()
+    ctr.set_zoom(0.8)
+    ctr.set_front([0, 0, -1])  # Look at the front of the object
+    ctr.set_lookat([0, 0, 0])  # Look at the center
+    ctr.set_up([0, 1, 0])      # Set up direction
+    
+    # Update and render
+    vis.update_geometry(mesh)
+    vis.poll_events()
+    vis.update_renderer()
+    
+    # Capture and save image
+    image = vis.capture_screen_float_buffer(do_render=True)
+    image_np = np.asarray(image)
+    plt.imsave(output_file, image_np)
+    
+    # Close the visualizer
+    vis.destroy_window()
+    
+    logger.info(f"Saved high-resolution render to {output_file}")
 
 
 def add_mesh_to_tensorboard(writer, vertices, faces, epoch, tag="mesh"):
@@ -552,7 +597,7 @@ def generate_optimizer(parameters, learning_rate, name="lion"):
 @hydra.main(config_path="config", config_name="implicit_3d")
 def main(cfg: DictConfig):
     """
-    Main function for training an implicit 3D representation.
+    Main function for training an implicit 3D representation or rendering from a pre-trained model.
     
     Args:
         cfg: Hydra configuration
@@ -573,7 +618,77 @@ def main(cfg: DictConfig):
     model_path = download_model(cfg.model_url, os.path.join(output_dir, "model.obj"))
     mesh = load_mesh(model_path)
     
-    # Generate point cloud with SDF values
+    # Create model
+    model = Implicit3DNetwork(
+        input_dim=3,
+        output_dim=1,
+        hidden_layers=cfg.hidden_layers,
+        rotations=cfg.rotations,
+        num_points=cfg.num_points,
+        position_range=cfg.position_range,
+        anti_periodic=cfg.anti_periodic,
+        position_init=cfg.position_init,
+        rotation_layers=cfg.rotation_layers,
+    ).to(device)
+    
+    # Load pre-trained model if specified
+    if cfg.model_path is not None:
+        logger.info(f"Loading pre-trained model from {cfg.model_path}")
+        try:
+            model.load_state_dict(torch.load(cfg.model_path, map_location=device))
+            logger.info("Model loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load model: {e}")
+            if cfg.render_only:
+                logger.error("Cannot continue in render_only mode without a valid model")
+                return
+    
+    # Create TensorBoard writer
+    writer = SummaryWriter(log_dir=os.path.join(output_dir, "tensorboard"))
+    
+    # If render_only mode, skip training and just render high-res mesh
+    if cfg.render_only:
+        logger.info("Running in render-only mode (no training)")
+        model.eval()
+        
+        # Determine output directory - use the same directory as the model file if provided
+        if cfg.model_path is not None:
+            # Use the directory of the model file for outputs
+            model_dir = os.path.dirname(os.path.abspath(cfg.model_path))
+            if model_dir:
+                output_dir = model_dir
+                logger.info(f"Using model directory for outputs: {output_dir}")
+        
+        # Extract high-resolution mesh
+        logger.info(f"Extracting high-resolution mesh with resolution {cfg.high_res_resolution}...")
+        vertices, faces = extract_mesh(
+            model, 
+            resolution=cfg.high_res_resolution, 
+            threshold=cfg.mesh_threshold,
+            device=device
+        )
+        
+        # Get base filename from model path if available
+        if cfg.model_path is not None:
+            base_filename = os.path.splitext(os.path.basename(cfg.model_path))[0]
+            high_res_mesh_file = os.path.join(output_dir, f"{base_filename}_high_res.obj")
+            render_output_file = os.path.join(output_dir, f"{base_filename}_{cfg.render_output_file}")
+        else:
+            high_res_mesh_file = os.path.join(output_dir, "high_res_mesh.obj")
+            render_output_file = os.path.join(output_dir, cfg.render_output_file)
+        
+        # Save mesh
+        mesh = save_mesh(vertices, faces, high_res_mesh_file)
+        
+        if mesh is not None:
+            # Render high-resolution image
+            logger.info(f"Rendering high-resolution mesh to {render_output_file}")
+            render_high_res_mesh(mesh, render_output_file)
+        
+        return
+    
+    # For training mode, generate point cloud and create dataloader
+    logger.info("Generating point cloud for training...")
     points, sdf_values = generate_point_cloud(
         mesh, 
         num_points=cfg.num_mesh_points, 
@@ -593,19 +708,6 @@ def main(cfg: DictConfig):
         shuffle=True
     )
     
-    # Create model
-    model = Implicit3DNetwork(
-        input_dim=3,
-        output_dim=1,
-        hidden_layers=cfg.hidden_layers,
-        rotations=cfg.rotations,
-        num_points=cfg.num_points,
-        position_range=cfg.position_range,
-        anti_periodic=cfg.anti_periodic,
-        position_init=cfg.position_init,
-        rotation_layers=cfg.rotation_layers,
-    ).to(device)
-    
     # Create optimizer
     optimizer = generate_optimizer(
         model.parameters(), 
@@ -615,9 +717,6 @@ def main(cfg: DictConfig):
     
     # Create loss function
     loss_fn = nn.MSELoss()
-    
-    # Create TensorBoard writer
-    writer = SummaryWriter(log_dir=os.path.join(output_dir, "tensorboard"))
     
     # Training loop
     best_loss = float('inf')
@@ -725,7 +824,30 @@ def main(cfg: DictConfig):
             threshold=cfg.mesh_threshold,
             device=device
         )
-        save_mesh(vertices, faces, os.path.join(output_dir, "final_mesh.obj"))
+        mesh = save_mesh(vertices, faces, os.path.join(output_dir, "final_mesh.obj"))
+        
+        # Render high-resolution mesh if enabled
+        if cfg.render_high_res and mesh is not None:
+            logger.info("Rendering high-resolution mesh at the end of training...")
+            
+            # Extract high-resolution mesh
+            logger.info(f"Extracting high-resolution mesh with resolution {cfg.high_res_resolution}...")
+            hr_vertices, hr_faces = extract_mesh(
+                model, 
+                resolution=cfg.high_res_resolution, 
+                threshold=cfg.mesh_threshold,
+                device=device
+            )
+            
+            # Save high-resolution mesh
+            high_res_mesh_file = os.path.join(output_dir, "high_res_mesh.obj")
+            hr_mesh = save_mesh(hr_vertices, hr_faces, high_res_mesh_file)
+            
+            if hr_mesh is not None:
+                # Render high-resolution image
+                render_output_file = os.path.join(output_dir, cfg.render_output_file)
+                logger.info(f"Rendering high-resolution mesh to {render_output_file}")
+                render_high_res_mesh(hr_mesh, render_output_file)
         
         # Add final mesh to TensorBoard
         add_mesh_to_tensorboard(

@@ -8,7 +8,7 @@ model_url: "https://graphics.stanford.edu/~mdfisher/Data/Meshes/bunny.obj"  # St
 device: "cuda"  # Use "cuda" for GPU, "cpu" for CPU
 
 # Model configuration
-hidden_layers: [20, 20]  # Sizes of hidden layers
+hidden_layers: [40, 40]  # Sizes of hidden layers
 rotations: 2              # Number of rotations in the rotation layer
 rotation_layers: 1
 num_points: 30                # Initial number of points for piecewise functions
@@ -35,6 +35,13 @@ move_smoothest_after: 0     # Start moving smoothest points after N epochs
 extract_mesh: true           # Whether to extract meshes during training
 mesh_resolution: 64          # Resolution of the grid for marching cubes
 mesh_threshold: 0.0        # Threshold for the isosurface (median of SDF values)
+
+# High-resolution rendering configuration
+render_high_res: false      # Whether to render a high-resolution mesh at the end of training
+render_only: false          # Only render from a pre-trained model (no training)
+model_path: null            # Path to a pre-trained model to load (null = don't load)
+high_res_resolution: 256    # Resolution for high-resolution rendering
+render_output_file: "high_res_render.png"  # Output file for high-resolution render
 
 # Visualization and saving configuration
 save_frequency: 10           # Save progress image and mesh every N epochs

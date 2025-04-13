@@ -82,6 +82,20 @@ small memory machine
 python examples/shakespeare_generation.py -m training.learning_rate=1e-3 training.num_epochs=20 training.move_every_n_batches=50 model.hidden_size=16 model.num_points=32 training.batch_size=64 training.adapt=move
 ```
 
+## 3D Implicit Representation
+This one is pretty solid
+```
+python examples/implicit_3d.py mesh_resolution=100 learning_rate=1e-5 hidden_layers=[40, 40]
+```
+rendering after run
+```
+python examples/implicit_3d.py render_only=true model_path=/path/to/model.pt high_res_resolution=256
+```
+different output name
+```
+python examples/implicit_3d.py render_high_res=true render_output_file="my_render.png"
+```
+
 ## Running visualization tests
 use the -v to write data to file
 ```
