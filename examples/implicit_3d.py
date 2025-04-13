@@ -296,6 +296,7 @@ def extract_mesh(model, resolution=64, threshold=0.0, device='cpu'):
     logger.info(f"Number of values above threshold {threshold}: {np.sum(sdf_values > threshold)}")
     
     # Try different thresholds if needed
+    """
     if np.sum(sdf_values < threshold) == 0 or np.sum(sdf_values > threshold) == 0:
         logger.warning(f"No isosurface found at threshold {threshold}. Trying to find a better threshold...")
         # Find a threshold that would create a surface
@@ -311,6 +312,7 @@ def extract_mesh(model, resolution=64, threshold=0.0, device='cpu'):
             new_threshold = np.median(sdf_values)
             logger.warning(f"Using median as threshold: {new_threshold}")
             threshold = new_threshold
+    """
     
     # Extract mesh using marching cubes
     try:
@@ -459,9 +461,9 @@ def generate_optimizer(parameters, learning_rate, name="lion"):
         Optimizer instance
     """
     if name.lower() == "lion":
-        return Lion(parameters, lr=learning_rate, weight_decay=1e-2)
+        return Lion(parameters, lr=learning_rate, weight_decay=0)
     else:
-        return optim.Adam(parameters, lr=learning_rate, weight_decay=1e-5)
+        return optim.Adam(parameters, lr=learning_rate, weight_decay=0)
 
 
 @hydra.main(config_path="config", config_name="implicit_3d")
@@ -558,14 +560,19 @@ def main(cfg: DictConfig):
             if cfg.adaptive and batch_idx % cfg.adaptive_frequency == 0:
                 with torch.no_grad():
                     # Calculate error
-                    error = torch.abs(predictions - batch_sdf)
+                    # error = torch.abs(predictions - batch_sdf)
                     
                     # Find point with largest error and add a point there
-                    model.global_error(error, batch_points)
+                    # model.global_error(error, batch_points)
                     
                     # Move smoothest point
                     if cfg.move_smoothest and epoch > cfg.move_smoothest_after:
                         model.move_smoothest()
+                        optimizer = generate_optimizer(
+                            parameters=model.parameters(),
+                            learning_rate=cfg.learning_rate,
+                            name=cfg.optimizer
+                        )
         
         # Calculate average loss for the epoch
         avg_loss = epoch_loss / len(dataloader)

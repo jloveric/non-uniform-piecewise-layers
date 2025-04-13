@@ -8,7 +8,7 @@ model_url: "https://graphics.stanford.edu/~mdfisher/Data/Meshes/bunny.obj"  # St
 device: "cuda"  # Use "cuda" for GPU, "cpu" for CPU
 
 # Model configuration
-hidden_layers: [20, 20]  # Sizes of hidden layers
+hidden_layers: [64, 64, 64]  # Sizes of hidden layers
 rotations: 2              # Number of rotations in the rotation layer
 num_points: 20                # Initial number of points for piecewise functions
 position_range: [-1, 1]      # Range of positions for piecewise functions
@@ -21,7 +21,7 @@ num_mesh_points: 10000            # Number of points to sample from the mesh
 # Training configuration
 epochs: 100                  # Number of training epochs
 batch_size: 1024             # Batch size for training
-learning_rate: 0.0001         # Learning rate
+learning_rate: 0.001         # Learning rate
 optimizer: lion            # Optimizer (lion or adam)
 
 # Adaptive configuration
@@ -33,7 +33,7 @@ move_smoothest_after: 0     # Start moving smoothest points after N epochs
 # Mesh extraction configuration
 extract_mesh: true           # Whether to extract meshes during training
 mesh_resolution: 64          # Resolution of the grid for marching cubes
-mesh_threshold: 0.055        # Threshold for the isosurface (median of SDF values)
+mesh_threshold: 0.0        # Threshold for the isosurface (median of SDF values)
 
 # Visualization and saving configuration
 save_frequency: 10           # Save progress image and mesh every N epochs
