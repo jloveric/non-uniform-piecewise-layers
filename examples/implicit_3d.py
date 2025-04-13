@@ -114,13 +114,20 @@ def generate_point_cloud(mesh, num_points=10000, signed_distance=True, normalize
         # Surface points have distance close to 0
         sdf_values[:num_points // 2] = 0.0 #np.random.normal(0, 0.01, size=num_points // 2)
         
-        # Volume points need distance computation
-        for i in range(num_points // 2, num_points):
-            point = points[i]
-            closest_point, distance, _ = trimesh.proximity.closest_point(mesh, [point])
-            # Check if point is inside or outside
-            inside = mesh.contains([point])[0]
-            sdf_values[i] = -distance if inside else distance
+        # Volume points need distance computation - vectorized approach
+        volume_points = points[num_points // 2:]
+        
+        # Compute closest points and distances in one batch operation
+        closest_points, distances, _ = trimesh.proximity.closest_point(mesh, volume_points)
+        
+        # Check which points are inside the mesh (vectorized)
+        inside = mesh.contains(volume_points)
+        
+        # Apply sign based on inside/outside (vectorized)
+        distances[inside] *= -1  # Negative distance for inside points
+        
+        # Assign to sdf_values
+        sdf_values[num_points // 2:] = distances
     else:
         # Just use 1 for surface, 0 for non-surface
         sdf_values = np.zeros(points.shape[0])
