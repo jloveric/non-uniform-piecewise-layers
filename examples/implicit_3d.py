@@ -359,61 +359,73 @@ def add_mesh_to_tensorboard(writer, vertices, faces, epoch, tag="mesh"):
     
     Args:
         writer: TensorBoard SummaryWriter
-        vertices: Mesh vertices as numpy array
-        faces: Mesh faces as numpy array
+        vertices: Mesh vertices as numpy array (should be on CPU)
+        faces: Mesh faces as numpy array (should be on CPU)
         epoch: Current epoch
         tag: Tag for the mesh in TensorBoard
     """
-    if len(vertices) == 0 or len(faces) == 0:
-        logger.warning(f"Cannot add empty mesh to TensorBoard")
+    if vertices is None or faces is None or len(vertices) == 0 or len(faces) == 0:
+        logger.warning(f"Cannot add empty or invalid mesh '{tag}' to TensorBoard")
         return
     
-    # Create Open3D mesh for coloring (optional)
-    mesh = o3d.geometry.TriangleMesh()
-    mesh.vertices = o3d.utility.Vector3dVector(vertices)
-    mesh.triangles = o3d.utility.Vector3iVector(faces)
+    # --- SOLUTION: Ensure we work with a CPU Open3D TriangleMesh --- 
+    # Explicitly create a standard CPU mesh and copy data.
+    # This avoids potential issues with implicit CUDA mesh creation.
+    logger.info(f"Creating CPU mesh for '{tag}'...")
     
-    # --- SOLUTION: Convert GPU mesh to CPU mesh if needed ---
-    try:
-        # If using the newer tensor-based API (o3d.t.geometry)
-        cpu_mesh = mesh.to_legacy()
-    except AttributeError:
-        # If it's already a legacy-style mesh, use it directly
-        logger.info("Mesh is already in legacy format")
-        cpu_mesh = mesh
+    # Ensure input arrays are numpy arrays on CPU
+    if isinstance(vertices, torch.Tensor):
+        vertices_np = vertices.detach().cpu().numpy()
+    else:
+        vertices_np = np.asarray(vertices)
+        
+    if isinstance(faces, torch.Tensor):
+        faces_np = faces.detach().cpu().numpy()
+    else:
+        faces_np = np.asarray(faces)
+        
+    # Fix inside-out rendering by reversing face orientations
+    # Swap the order of indices in each face (e.g., [0,1,2] becomes [0,2,1])
+    logger.info(f"Reversing face orientations for '{tag}' to fix inside-out rendering...")
+    reversed_faces_np = faces_np.copy()
+    # Swap the second and third vertex indices for each face
+    reversed_faces_np[:, [1, 2]] = reversed_faces_np[:, [2, 1]]
+    # Use the reversed faces
+    faces_np = reversed_faces_np
     
-    # Ensure the CPU mesh has vertices and triangles before proceeding
-    if not cpu_mesh.has_vertices() or not cpu_mesh.has_triangles():
-        logger.warning(f"Mesh '{tag}' is empty after CPU conversion. Skipping orientation and TensorBoard logging.")
-        return
+    # Skip the Open3D mesh creation and orientation entirely
+    # Just prepare the data for TensorBoard directly
     
-    # --- Now operate on the CPU mesh ---
-    logger.info("Orienting mesh triangles to exterior (on CPU)...")
-    cpu_mesh.orient_triangles_to_exterior()
-    cpu_mesh.compute_vertex_normals()  # Compute vertex normals for better visualization
-    logger.info("Orientation complete.")
+    # Create default colors based on vertex positions for visualization
+    # Normalize vertex positions to [0,1] range for coloring
+    min_vals = np.min(vertices_np, axis=0)
+    max_vals = np.max(vertices_np, axis=0)
+    range_vals = max_vals - min_vals
+    # Avoid division by zero
+    range_vals[range_vals == 0] = 1.0
     
-    # Add color based on vertex normals for better visualization
-    normals = np.asarray(cpu_mesh.vertex_normals)
-    # Convert normals to colors (normalize from [-1,1] to [0,1])
-    colors = (normals + 1) / 2.0
+    # Use normalized XYZ coordinates as RGB colors
+    colors = (vertices_np - min_vals) / range_vals
     # Scale to [0, 255] for TensorBoard
     colors = (colors * 255).astype(np.uint8)
     
     # Convert to PyTorch tensors and add batch dimension
-    vertices_tensor = torch.tensor(np.asarray(cpu_mesh.vertices)).float().unsqueeze(0)  # [1, N, 3]
-    faces_tensor = torch.tensor(np.asarray(cpu_mesh.triangles)).int().unsqueeze(0)      # [1, F, 3]
-    colors_tensor = torch.tensor(colors).unsqueeze(0)                                  # [1, N, 3]
+    vertices_tensor = torch.tensor(vertices_np).float().unsqueeze(0)  # [1, N, 3]
+    faces_tensor = torch.tensor(faces_np).int().unsqueeze(0)          # [1, F, 3]
+    colors_tensor = torch.tensor(colors).byte().unsqueeze(0)          # [1, N, 3]
     
     # Add to TensorBoard
-    writer.add_mesh(
-        tag=tag,
-        vertices=vertices_tensor,
-        faces=faces_tensor,
-        colors=colors_tensor,
-        global_step=epoch
-    )
-    logger.info(f"Mesh '{tag}' added to TensorBoard.")
+    try:
+        writer.add_mesh(
+            tag=tag,
+            vertices=vertices_tensor,
+            faces=faces_tensor,
+            colors=colors_tensor,
+            global_step=epoch
+        )
+        logger.info(f"Mesh '{tag}' added to TensorBoard.")
+    except Exception as e:
+        logger.error(f"Failed to add mesh '{tag}' to TensorBoard: {e}")
 
 
 def save_progress_image(model, points, sdf_values, epoch, loss, output_dir, batch_size=512, writer=None):
