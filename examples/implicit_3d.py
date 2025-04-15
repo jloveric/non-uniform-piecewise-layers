@@ -631,7 +631,44 @@ def main(cfg: DictConfig):
         rotation_layers=cfg.rotation_layers,
     ).to(device)
     
-    # Load pre-trained model if specified
+    # In render_only mode, try to load the original config first
+    if cfg.render_only and cfg.model_path is not None:
+        model_dir = os.path.dirname(os.path.abspath(cfg.model_path))
+        hydra_config_path = os.path.join(model_dir, ".hydra", "config.yaml")
+        
+        if os.path.exists(hydra_config_path):
+            logger.info(f"Loading original config from {hydra_config_path}")
+            try:
+                # Load the original config
+                original_cfg = OmegaConf.load(hydra_config_path)
+                
+                # Update model configuration from original config
+                # This ensures we use the same model architecture as during training
+                for key in ['hidden_layers', 'rotations', 'rotation_layers', 'num_points', 
+                           'position_range', 'anti_periodic', 'position_init', 'mesh_threshold']:
+                    if key in original_cfg:
+                        setattr(cfg, key, original_cfg[key])
+                        logger.info(f"Using original config value for {key}: {original_cfg[key]}")
+            except Exception as e:
+                logger.warning(f"Failed to load or apply original config: {e}")
+                logger.warning("Continuing with current config")
+        else:
+            logger.warning(f"Original config not found at {hydra_config_path}")
+    
+    # Recreate the model with the potentially updated config
+    model = Implicit3DNetwork(
+        input_dim=3,
+        output_dim=1,
+        hidden_layers=cfg.hidden_layers,
+        rotations=cfg.rotations,
+        num_points=cfg.num_points,
+        position_range=cfg.position_range,
+        anti_periodic=cfg.anti_periodic,
+        position_init=cfg.position_init,
+        rotation_layers=cfg.rotation_layers,
+    ).to(device)
+    
+    # Now load the pre-trained model if specified
     if cfg.model_path is not None:
         logger.info(f"Loading pre-trained model from {cfg.model_path}")
         try:
