@@ -787,6 +787,7 @@ def main(cfg: DictConfig):
                     
                     # Move smoothest point
                     if cfg.move_smoothest and epoch > cfg.move_smoothest_after:
+                        model.move_smoothest()
                         optimizer = generate_optimizer(
                             parameters=model.parameters(),
                             learning_rate=cfg.learning_rate,
