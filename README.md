@@ -1,10 +1,18 @@
 # Dynamic Non-Uniform Piecewise Linear Layers
 
+## Example adding nodes
+
 ![Example of function approximation](readme-images/final_approximation.png)
 ![Training progress animation](readme-images/training_progress_loop.gif)
+
+## Example moving nodes (square wave)
+
 ![Dynamic square wave](readme-images/dynamic_square_wave_loop.gif) 
-![Dynamic Circle](readme-images/dynamic_circle_loop.gif)
-![Dynamic Circle Weights](readme-images/dynamic_circle_weights_loop.gif)
+
+## Example moving nodes (circle)
+
+![Dynamic Circle](readme-images/progress_loop.gif)
+![Dynamic Circle Weights](readme-images/weights_loop.gif)
 
 A PyTorch implementation of non-uniform piecewise linear layers. These layers can learn arbitrary continuous piecewise linear functions, where both the positions (x-coordinates) and values (y-coordinates) of the control points are learned parameters.
 
