@@ -1,48 +1,16 @@
-# Non-Uniform Piecewise Linear Layers
+# Dynamic Non-Uniform Piecewise Linear Layers
 
 ![Example of function approximation](readme-images/final_approximation.png)
 ![Training progress animation](readme-images/training_progress_loop.gif)
-![Dynamic square wave](readme-images/dynamic_square_wave_loop.gif)  
+![Dynamic square wave](readme-images/dynamic_square_wave_loop.gif) 
+![Dynamic Circle](readme-images/dynamic_circle_loop.gif)
+![Dynamic Circle Weights](readme-images/dynamic_circle_weights_loop.gif)
 
 A PyTorch implementation of non-uniform piecewise linear layers. These layers can learn arbitrary continuous piecewise linear functions, where both the positions (x-coordinates) and values (y-coordinates) of the control points are learned parameters.
 
-## Installation
+I typically run these in either dynamic mode, i.e, adding nodes or adaptively where the nodes are moved, but conserving total number of nodes.
 
-```bash
-pip install non-uniform-piecewise-layers
-```
-
-Or install from source:
-
-```bash
-git clone https://github.com/jloveric/non-uniform-piecewise-layers.git
-cd non-uniform-piecewise-layers
-pip install -e .
-```
-
-## Usage
-
-### Basic Example
-
-```python
-import torch
-from non_uniform_piecewise_layers import NonUniformPiecewiseLinear
-
-# Create a layer with 2 inputs, 3 outputs, and 10 control points per function
-layer = NonUniformPiecewiseLinear(
-    num_inputs=2,
-    num_outputs=3,
-    num_points=10
-)
-
-# Forward pass
-batch_size = 32
-x = torch.randn(batch_size, 2)  # Input tensor
-y = layer(x)  # Output shape: (batch_size, 3)
-
-# Enforce monotonicity of control points (optional)
-layer.enforce_monotonic()
-```
+this is a work in progress
 
 ### Function Approximation Example
 
@@ -52,15 +20,6 @@ See `examples/sine_fitting.py` for a complete example of approximating a complex
 - Loss function and optimization
 - Visualization of results
 - Control point position monitoring
-
-## Layer Architecture
-
-The layer consists of the following learnable parameters:
-
-- `positions`: Control point x-coordinates with shape (num_inputs, num_outputs, num_points)
-- `values`: Control point y-coordinates with shape (num_inputs, num_outputs, num_points)
-
-For each input-output pair, the layer learns a separate piecewise linear function defined by `num_points` control points. The forward pass performs efficient linear interpolation between these points.
 
 ## Square Wave
 Non default example
