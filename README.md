@@ -12,6 +12,9 @@
 ## Example moving nodes (circle)
 
 ![Dynamic Circle](readme-images/progress_loop.gif)
+
+### Layer weights for the circle
+
 ![Dynamic Circle Weights](readme-images/weights_loop.gif)
 
 A PyTorch implementation of non-uniform piecewise linear layers. These layers can learn arbitrary continuous piecewise linear functions, where both the positions (x-coordinates) and values (y-coordinates) of the control points are learned parameters.
@@ -22,12 +25,7 @@ this is a work in progress
 
 ### Function Approximation Example
 
-See `examples/sine_fitting.py` for a complete example of approximating a complex function using the non-uniform piecewise linear layer. The example includes:
-
-- Training setup with PyTorch
-- Loss function and optimization
-- Visualization of results
-- Control point position monitoring
+See `examples/sine_fitting.py` for a complete example of approximating a complex function using the non-uniform piecewise linear layer.
 
 ## Square Wave
 Non default example
