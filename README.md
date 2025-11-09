@@ -73,6 +73,7 @@ pytest tests/test_visualization.py -v
 
 [Deep Networks Always Grok and Here's Why](https://arxiv.org/pdf/2402.15555)
 
-
+Papers below are not currently used in this project, but would be interesting to investigate in the future
 [Oja’s plasticity rule overcomes several challenges of training neural networks under biological constraints](https://arxiv.org/html/2408.08408)
 
+[Continual Learning with Hebbian Plasticity in Sparse and Predictive Coding Networks: A Survey and Perspective](https://arxiv.org/abs/2407.17305)

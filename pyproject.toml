@@ -18,6 +18,7 @@ dependencies = [
     "click>=8.1.8,<9",
     "tqdm>=4.67.1,<5",
     "triton>=3.2.0,<4",
+    "open3d",
 ]
 
 [dependency-groups]
@@ -33,3 +34,6 @@ dev = [
     "scikit-image>=0.25.2,<0.26",
     "rtree>=1.4.0,<2",
 ]
+
+[tool.uv.sources]
+open3d = { url = "https://github.com/bitplane/Open3D/releases/download/v0.18.0-gpu/open3d-0.18.0+efd4b3b0b-cp313-cp313-manylinux_2_41_x86_64.whl" }
