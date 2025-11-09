@@ -68,3 +68,11 @@ use the -v to write data to file
 ```
 pytest tests/test_visualization.py -v
 ```
+
+## Interesting Papers
+
+[Deep Networks Always Grok and Here's Why](https://arxiv.org/pdf/2402.15555)
+
+
+[Oja’s plasticity rule overcomes several challenges of training neural networks under biological constraints](https://arxiv.org/html/2408.08408)
+
