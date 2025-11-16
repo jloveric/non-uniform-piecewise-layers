@@ -20,6 +20,7 @@ from non_uniform_piecewise_layers import AdaptivePiecewiseMLP
 from non_uniform_piecewise_layers.rotation_layer import fixed_rotation_layer
 from non_uniform_piecewise_layers.utils import largest_error
 from tqdm import tqdm
+from non_uniform_piecewise_layers.oja_backprop import oja_backprop_step
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +117,8 @@ class ImplicitImageNetwork(nn.Module):
         num_points=5,
         position_range=(-1, 1),
         anti_periodic=True,
-        position_init='random'
+        position_init='random',
+        normalization='maxabs'
     ):
         """
         Initialize the network.
@@ -150,7 +152,7 @@ class ImplicitImageNetwork(nn.Module):
             position_range=position_range,
             anti_periodic=anti_periodic,
             position_init=position_init,
-            normalization="maxabs"
+            normalization=normalization
         )
     
     def forward(self, x):
@@ -361,6 +363,10 @@ def main(cfg: DictConfig):
     )
     
     # Create model
+    normalization = cfg.model.normalization
+    use_oja = normalization == 'oja'
+    mlp_norm = 'noop' if use_oja else normalization
+
     model = ImplicitImageNetwork(
         input_dim=position_data.shape[1],
         output_dim=image_data.shape[1],
@@ -369,7 +375,8 @@ def main(cfg: DictConfig):
         num_points=cfg.model.num_points,
         position_range=tuple(cfg.model.position_range),
         anti_periodic=cfg.model.anti_periodic,
-        position_init=cfg.model.position_init
+        position_init=cfg.model.position_init,
+        normalization=mlp_norm
     ).to(device)
     
     # Create optimizer
@@ -445,7 +452,11 @@ def main(cfg: DictConfig):
             # Backward pass and optimize
             optimizer.zero_grad()
             loss.backward()
-            optimizer.step()
+            if use_oja:
+                oja_lr = cfg.training.oja_lr if hasattr(cfg.training, 'oja_lr') else 1e-3
+                oja_backprop_step(model, optimizer, oja_lr=oja_lr, reduce='mean', zero_grad=False)
+            else:
+                optimizer.step()
             
             batch_loss = loss.item()
             total_loss += batch_loss * batch_inputs.size(0)

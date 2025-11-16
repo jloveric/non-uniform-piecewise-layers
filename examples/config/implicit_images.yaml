@@ -12,6 +12,7 @@ model:
   position_range: [-1, 1]              # Range of positions for piecewise functions
   anti_periodic: true                  # Whether to use anti-periodic boundary conditions
   position_init: random
+  normalization: maxabs
 
 # Training configuration
 training:

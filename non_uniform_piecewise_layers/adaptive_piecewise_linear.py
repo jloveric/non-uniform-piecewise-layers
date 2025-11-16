@@ -62,6 +62,8 @@ class AdaptivePiecewiseLinear(nn.Module):
         weights = torch.linspace(0, 1, num_points, device=start.device).view(1, 1, num_points)
         values_line = start.unsqueeze(-1) * (1 - weights) + end.unsqueeze(-1) * weights
         self.values = nn.Parameter(values_line)
+        self._oja_pre = None
+        self._oja_post = None
 
     def insert_positions(self, x_values: torch.Tensor):
         """
@@ -378,7 +380,62 @@ class AdaptivePiecewiseLinear(nn.Module):
         # Sum over the input dimension to get final output
         output = output.sum(dim=1)
 
+        self._oja_pre = x.detach()
+        self._oja_post = output.detach()
+
         return output
+
+    def oja_step(self, lr: float, reduce: str = "mean") -> None:
+        if self._oja_pre is None or self._oja_post is None:
+            return
+        with torch.no_grad():
+            x = self._oja_pre
+            y = self._oja_post
+
+            device = self.values.device
+            dtype = self.values.dtype
+
+            x_expanded = x.unsqueeze(-1)
+            x_broad = x_expanded.unsqueeze(2)
+            pos_broad = self.positions.unsqueeze(0)
+
+            mask = (x_broad >= pos_broad[..., :-1]) & (x_broad < pos_broad[..., 1:])
+            x0 = self.positions[..., :-1].unsqueeze(0)
+            x1 = self.positions[..., 1:].unsqueeze(0)
+            duplicate_mask = torch.isclose(x0, x1, rtol=1e-5)
+            denom = torch.where(duplicate_mask, torch.ones_like(x0), (x1 - x0))
+            t_raw = (x_broad - x0) / denom
+            t = torch.where(duplicate_mask, torch.zeros_like(t_raw), t_raw).clamp(0.0, 1.0)
+
+            coeff_left_iv = (1.0 - t) * mask
+            coeff_right_iv = t * mask
+
+            cp_coeffs = torch.zeros((x.shape[0], self.num_inputs, self.num_outputs, self.num_points),
+                                     device=device, dtype=dtype)
+            cp_coeffs[..., :-1] += coeff_left_iv
+            cp_coeffs[..., 1:] += coeff_right_iv
+
+            left_mask = (x_broad < pos_broad[..., 0:1]).squeeze(-1)
+            right_mask = (x_broad >= pos_broad[..., -1:]).squeeze(-1)
+            cp_coeffs[..., 0] += left_mask
+            cp_coeffs[..., -1] += right_mask
+
+            pre_param = cp_coeffs
+
+            post_expand = y.unsqueeze(1).unsqueeze(-1)
+            hebb_b = post_expand * pre_param
+            if reduce == "sum":
+                hebb = hebb_b.sum(dim=0)
+                row_scale = y.pow(2).sum(dim=0)
+            else:
+                hebb = hebb_b.mean(dim=0)
+                row_scale = y.pow(2).mean(dim=0)
+
+            self.values.add_(lr * (hebb - row_scale.view(1, -1, 1) * self.values))
+
+    def zero_oja_buffers(self) -> None:
+        self._oja_pre = None
+        self._oja_post = None
 
     def compute_abs_grads(self, x):
         """
