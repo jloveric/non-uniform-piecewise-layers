@@ -23,6 +23,13 @@ I typically run these in either dynamic mode, i.e, adding nodes or adaptively wh
 
 this is a work in progress
 
+## Example moving nodes implicit representation
+
+Using 40 neurons in a single hidden layer
+
+![Moving nodes implicit representation](readme-images/implicit2d_loop.gif)
+
+
 ### Function Approximation Example
 
 See `examples/sine_fitting.py` for a complete example of approximating a complex function using the non-uniform piecewise linear layer.
