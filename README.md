@@ -49,6 +49,11 @@ small memory machine
 python examples/shakespeare_generation.py -m training.learning_rate=1e-3 training.num_epochs=20 training.move_every_n_batches=50 model.hidden_size=16 model.num_points=32 training.batch_size=64 training.adapt=move
 ```
 
+## 2D Implicit Representation
+```
+uv run python examples/implicit_image.py model.normalization=noop training.num_epochs=20
+```
+
 ## 3D Implicit Representation
 This one is pretty solid
 ```
